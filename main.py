@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-API_ID = int(os.getenv("API_ID", "0"))
-API_HASH = os.getenv("API_HASH", "")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
+API_ID = 36781759
+API_HASH = "31a2abacece3f047a878d001aa3fbd95"
+BOT_TOKEN = 8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ
+OWNER_ID = 7367921416
 CHECK_ACCOUNT_ID = OWNER_ID
 
 DB_NAME = "bot_database.db"
