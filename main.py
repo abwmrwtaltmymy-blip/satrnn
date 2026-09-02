@@ -1424,8 +1424,8 @@ async def owner_toggle_free_handler(event):
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # جلب الإعدادات والتوكنات مع قيم افتراضية احتياطية
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ضع_توكن_البوت_هنا")
-OWNER_ID = int(os.getenv("OWNER_ID", 123456789)) # ضع آيدي المالك الخاص بك هنا
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ")
+OWNER_ID = int(os.getenv("OWNER_ID", 7367921416)) # ضع آيدي المالك الخاص بك هنا
 
 bot = telebot.TeleBot(BOT_TOKEN)
 DB_NAME = "bot_database.db"
