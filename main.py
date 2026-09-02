@@ -1562,4 +1562,3 @@ if __name__ == '__main__':
     init_db()
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
-
