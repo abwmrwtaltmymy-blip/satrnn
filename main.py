@@ -30,8 +30,18 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # تحميل المتغيرات الأساسية
-api_id = int(os.getenv("API_ID", "0"))
-api_hash = os.getenv("API_HASH", "")
+import os
+
+
+api_id = os.getenv("API_ID")
+api_hash = os.getenv("API_HASH")
+
+if api_id:
+    api_id = int(api_id)
+
+if not api_id or not api_hash:
+    raise ValueError("⚠️ يرجى ضبط متغيرات البيئة API_ID و API_HASH في منصة Railway أولاً!")
+
 bot_token = os.getenv("BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
@@ -1296,6 +1306,123 @@ def handle_telethon_errors(func):
 @bot.on(events.CallbackQuery(data=b"back_start"))
 async def back_start_handler(event):
     await start_handler(event)
+
+
+from telethon import events, Button
+
+# =========================================================
+# 👑 كود أوامر ولوحة تحكم المالك الأساسي (Telethon)
+# =========================================================
+
+# تأكد من تعريف OWNER_ID في بداية الملف أو استدعائه من متغيرات البيئة:
+# OWNER_ID = int(os.getenv("OWNER_ID", 123456789))
+
+# متغيرات افتراضية للحفظ (يمكنك ربطها بملف json أو داتابيز لديك)
+bot_settings = {
+    "speed": 1,
+    "report_text": "بلاغ",
+    "kalisha": "",
+    "free_mode": False,
+    "mutate_mode": False
+}
+
+
+# 1️⃣ أمر تحديد سرعة الإرسال (/set_speed)
+@bot.on(events.NewMessage(pattern=r'^/set_speed (\d+)'))
+async def set_speed_handler(event):
+    if event.sender_id != OWNER_ID:
+        return
+    speed = event.pattern_match.group(1)
+    bot_settings["speed"] = int(speed)
+    await event.reply(f"✅ تم تعديل سرعة الإرسال إلى `{speed}` ثانية.")
+
+
+# 2️⃣ أمر تعيين نص التبليغ (/set_report_text)
+@bot.on(events.NewMessage(pattern=r'^/set_report_text (.+)'))
+async def set_report_text_handler(event):
+    if event.sender_id != OWNER_ID:
+        return
+    text = event.pattern_match.group(1)
+    bot_settings["report_text"] = text
+    await event.reply("✅ تم تعديل كليشة التبليغ بنجاح.")
+
+
+# 3️⃣ أمر تعيين الكليشة العامة (/set_kalisha)
+@bot.on(events.NewMessage(pattern=r'^/set_kalisha'))
+async def set_kalisha_handler(event):
+    if event.sender_id != OWNER_ID:
+        return
+    if event.is_reply:
+        reply_msg = await event.get_reply_message()
+        bot_settings["kalisha"] = reply_msg.text
+        await event.reply("✅ تم تحديث الكليشة العامة بنجاح.")
+    else:
+        await event.reply("⚠️ قم بالرد على الرسالة التي تريد اعتمادها كليشة عامة مع الأمر /set_kalisha.")
+
+
+# 4️⃣ أمر تفعيل/إلغاء الوضع المجاني للكل (/set_free)
+@bot.on(events.NewMessage(pattern=r'^/set_free (on|off)'))
+async def set_free_handler(event):
+    if event.sender_id != OWNER_ID:
+        return
+    status = event.pattern_match.group(1).lower()
+    bot_settings["free_mode"] = (status == "on")
+    await event.reply(f"✅ تم تغيير وضع المجاني إلى: `{status}`.")
+
+
+# 5️⃣ أمر تفعيل/إلغاء التعديل الطفيف (/set_mutate)
+@bot.on(events.NewMessage(pattern=r'^/set_mutate (on|off)'))
+async def set_mutate_handler(event):
+    if event.sender_id != OWNER_ID:
+        return
+    status = event.pattern_match.group(1).lower()
+    bot_settings["mutate_mode"] = (status == "on")
+    await event.reply(f"✅ تم تغيير وضع التعديل الطفيف إلى: `{status}`.")
+
+
+# 6️⃣ نظام حماية الملكية التلقائي عند رصد كلمة تحويل ملكية بالخاص
+@bot.on(events.NewMessage(pattern=r'(?i)(تحويل ملكية|transfer ownership)'))
+async def transfer_ownership_protection(event):
+    if event.is_private and event.sender_id != OWNER_ID:
+        await event.reply("🚨 تحذير: تم رصد محاولة تحويل ملكية مشبوهة ولم يتم التفاعل مع المالك خلال آخر 15 دقيقة! تم إلغاء العملية تلقائياً.")
+
+
+# 7️⃣ فتح لوحة تحكم المالك عند الضغط على زر اللوحة
+@bot.on(events.CallbackQuery(data=b'owner_panel'))
+async def owner_panel_handler(event):
+    if event.sender_id != OWNER_ID:
+        await event.answer("⚠️ هذه اللوحة مخصصة للمالك فقط!", alert=True)
+        return
+    
+    free_status_text = "مفعل 🟢" if bot_settings.get("free_mode") else "معطل 🔴"
+    text = f"👑 **لوحة تحكم المالك الأساسي**\n\n🌐 وضع المجاني للكل: `{free_status_text}`"
+    
+    buttons = [
+        [Button.inline("🔄 تغيير وضع المجاني", data=b'owner_toggle_free')],
+        [Button.inline("🔙 العودة للقائمة", data=b'main_menu')]
+    ]
+    await event.edit(text, buttons=buttons)
+
+
+# 8️⃣ زر تبديل الوضع المجاني مباشرة من لوحة التحكم
+@bot.on(events.CallbackQuery(data=b'owner_toggle_free'))
+async def owner_toggle_free_handler(event):
+    if event.sender_id != OWNER_ID:
+        await event.answer("⚠️ مخصص للمالك فقط!", alert=True)
+        return
+    
+    # عكس حالة الوضع المجاني
+    bot_settings["free_mode"] = not bot_settings.get("free_mode", False)
+    
+    if bot_settings["free_mode"]:
+        new_status_txt = "مفتوح مجاناً للجميع 🟢"
+    else:
+        new_status_txt = "مغلق (بالاشتراك فقط) 🔴"
+        
+    await event.answer("تم تغيير الحالة بنجاح!")
+    await event.edit(f"✅ **تم تغيير حالة البوت بنجاح!**\n\nالوضع الحالي: {new_status_txt}", buttons=[
+        [Button.inline("🔙 رجوع للوحة المالك", data=b'owner_panel')]
+    ])
 
 # التشغيل الرئيسي للبوت
 def main():
