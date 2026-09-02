@@ -1420,10 +1420,7 @@ async def owner_toggle_free_handler(event):
         [Button.inline("🔙 رجوع للوحة المالك", data=b'owner_panel')]
     ])
 
-import os
-import sqlite3
-import telebot
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 # جلب الإعدادات والتوكنات مع قيم افتراضية احتياطية
 BOT_TOKEN = os.getenv("BOT_TOKEN", "ضع_توكن_البوت_هنا")
