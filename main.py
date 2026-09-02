@@ -29,16 +29,21 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# تحميل المتغيرات الأساسية
-import os
-
-
-
 
 bot_token = os.getenv("BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
-bot = TelegramClient("makkster_bot", api_id, api_hash)
+
+import os
+
+# سحب المتغيرات من إعدادات Railway
+# نستخدم int() لتحويل الـ api_id إلى رقم لأن المكتبة ترفضه كنص
+api_id = int(os.environ.get("API_ID"))
+api_hash = os.environ.get("API_HASH")
+
+# السطر الذي كان يسبب المشكلة (الآن سيعمل بشكل طبيعي)
+bot = TelegramClient("makKser_bot", api_id, api_hash)
+
 
 # المسارات والأساسيات
 DB_NAME = "bot_database.db"
