@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # استدعاء المتغيرات لتجنب خطأ NameError
-api_id = int(os.getenv("API_ID", "0"))
-api_hash = os.getenv("API_HASH", "")
-bot_token = os.getenv("BOT_TOKEN", "")
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+api_id = 36781759
+api_hash = 31a2abacece3f047a878d001aa3fbd95
+bot_token = 8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ
+OWNER_ID = 7367921416
 
 
 bot = TelegramClient("makkster_bot", api_id, api_hash)
