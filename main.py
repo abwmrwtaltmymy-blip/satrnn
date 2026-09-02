@@ -1456,7 +1456,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# 1. أمر /start (يظهر لأي شخص بدون اشتراط الرقم، ويشعر المالك بدخول مستخدم جديد)
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -1468,71 +1467,27 @@ def send_welcome(message):
     user_exists = cursor.fetchone()
     
     if not user_exists:
-        # تسجيل المستخدم مبدئياً بدون رقم هاتف لمعرفة أنه دخل للبوت
+        # تسجيل المستخدم بمعلوماته الأساسية
         cursor.execute('INSERT INTO users (user_id, role) VALUES (?, ?)', (user_id, 'user'))
         conn.commit()
         
-        # إرسال إشعار للمالك بأن شخصاً جديداً دخل للبوت
+        # إرسال إشعار للمالك
         try:
             bot.send_message(OWNER_ID, f"🚨 **مستخدم جديد دخل للبوت!**\n\n👤 الاسم: {username}\n🆔 الآيدي: `{user_id}`", parse_mode="Markdown")
         except Exception as e:
-            print(f"فشل إرسال الإشعار للمالك: {e}")
+            pass
             
     conn.close()
 
-    # إنشاء لوحة مفاتيح تطلب رقم الهاتف في حال اراد استخدام الخدمات
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add(KeyboardButton("شارك رقم هاتفك 📱", request_contact=True))
-    
-    bot.reply_to(message, "أهلاً بك في البوت! 🌟\nللاستفادة من خدمات البوت واستخدام الأزرار، يرجى مشاركة رقم هاتفك أولاً:", reply_markup=markup)
+    # رسالة ترحيب عادية بدون طلب الرقم
+    bot.reply_to(message, "أهلاً بك في البوت! 🌟\nيمكنك الآن استخدام الأزرار والخدمات مباشرة بحرية.")
 
-# 2. استقبال رقم الهاتف (عن طريق الزر أو كتابة الرقم)
-@bot.message_handler(content_types=['contact'])
-def handle_contact(message):
-    user_id = message.from_user.id
-    phone = message.contact.phone_number
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET phone_number = ? WHERE user_id = ?', (phone, user_id))
-    conn.commit()
-    conn.close()
-    
-    bot.reply_to(message, "✅ تم تسجيل رقم هاتفك بنجاح! يمكنك الآن استخدام أزرار وخدمات البوت.", reply_markup=telebot.types.ReplyKeyboardRemove())
 
-@bot.message_handler(func=lambda message: message.text and message.text.startswith('+'))
-def handle_phone_text(message):
-    user_id = message.from_user.id
-    phone = message.text.strip()
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET phone_number = ? WHERE user_id = ?', (phone, user_id))
-    conn.commit()
-    conn.close()
-    
-    bot.reply_to(message, "✅ تم حفظ رقم هاتفك بنجاح!")
-
-# 3. التحقق من تسجيل الرقم قبل تنفيذ أي زر أو خدمة
-def check_user_registered(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT phone_number FROM users WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result and result[0] is not None
-
-# مثال على زر أو خدمة تتطلب تسجيل الرقم أولاً:
 @bot.message_handler(func=lambda message: message.text == "خدمات البوت ⚙️" or message.text == "بدء الاستخراج")
 def restricted_service(message):
-    user_id = message.from_user.id
-    if not check_user_registered(user_id):
-        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.add(KeyboardButton("شارك رقم هاتفك 📱", request_contact=True))
-        bot.reply_to(message, "⚠️ عذراً, لا يمكنك استخدام هذا الزر أو الخدمة حتى تقوم بتسجيل رقم هاتفك أولاً!", reply_markup=markup)
-        return
-    
+    # الكود سيعمل للجميع مباشرة بدون المطالبة بأي رقم
     bot.reply_to(message, "مرحباً بك في الخدمة المطلوبة جاري التنفيذ...")
+
 
 # 4. أوامر المالك: إدارة الاشتراك الإجباري
 @bot.message_handler(commands=['admin'])
