@@ -1,4 +1,4 @@
-Enterimport asyncio
+import asyncio
 import os
 import random
 import telebot
