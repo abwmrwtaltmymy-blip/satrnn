@@ -33,14 +33,7 @@ load_dotenv()
 import os
 
 
-api_id = os.getenv("API_ID")
-api_hash = os.getenv("API_HASH")
 
-if api_id:
-    api_id = int(api_id)
-
-if not api_id or not api_hash:
-    raise ValueError("⚠️ يرجى ضبط متغيرات البيئة API_ID و API_HASH في منصة Railway أولاً!")
 
 bot_token = os.getenv("BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
@@ -1425,10 +1418,90 @@ async def owner_toggle_free_handler(event):
     ])
 
 # التشغيل الرئيسي للبوت
-def main():
-    asyncio.get_event_loop().run_until_complete(init_db())
-    bot.start(bot_token=bot_token)
-    bot.run_until_disconnected()
+import sqlite3
+import telebot
 
+# 1. إعداد توكن البوت
+BOT_TOKEN = 'ضع_توكن_البوت_هنا'
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# 2. إعداد قاعدة البيانات (SQLite)
+def init_db():
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    # إنشاء جدول المستخدمين إذا لم يكن موجوداً
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            phone_number TEXT,
+            api_id TEXT,
+            api_hash TEXT,
+            session_string TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# 3. كلاس استخراج بيانات تيليجرام
+class TelegramAPIExtractor:
+    def __init__(self, phone_number):
+        self.phone_number = phone_number
+        # هنا يمكنك إضافة إعدادات الاتصال (requests أو Telethon)
+
+    def get_api_credentials(self):
+        """
+        هذه الدالة تحتوي على منطق استخراج الـ API ID و API Hash 
+        من موقع my.telegram.org أو عبر مكتبة Telethon.
+        """
+        # تم وضع بيانات وهمية كمثال للتوضيح. ضع كود الاستخراج الفعلي هنا.
+        extracted_api_id = "1234567"
+        extracted_api_hash = "abcdef1234567890abcdef1234567890"
+        
+        return extracted_api_id, extracted_api_hash
+
+# 4. دوال التعامل مع قاعدة البيانات
+def save_user_data(user_id, phone, api_id, api_hash):
+    conn = sqlite3.connect('bot_database.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR REPLACE INTO users (user_id, phone_number, api_id, api_hash)
+        VALUES (?, ?, ?, ?)
+    ''', (user_id, phone, api_id, api_hash))
+    conn.commit()
+    conn.close()
+
+# 5. أوامر البوت
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "أهلاً بك! 🌟\nأرسل رقم هاتفك مع الرمز الدولي (مثال: +964...) للبدء باستخراج البيانات.")
+
+@bot.message_handler(func=lambda message: message.text.startswith('+'))
+def handle_phone_number(message):
+    user_id = message.from_user.id
+    phone_number = message.text.strip()
+    
+    bot.reply_to(message, "⏳ جاري معالجة الطلب واستخراج البيانات...")
+    
+    try:
+        # استخدام الكلاس لاستخراج البيانات
+        extractor = TelegramAPIExtractor(phone_number)
+        api_id, api_hash = extractor.get_api_credentials()
+        
+        # حفظ البيانات في SQLite
+        save_user_data(user_id, phone_number, api_id, api_hash)
+        
+        # إرسال النتيجة للمستخدم
+        response_msg = f"✅ تم استخراج البيانات بنجاح وحفظها بقاعدة البيانات:\n\n**API ID:** `{api_id}`\n**API Hash:** `{api_hash}`"
+        bot.send_message(user_id, response_msg, parse_mode="Markdown")
+        
+    except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ أثناء الاستخراج: {str(e)}")
+
+# 6. تشغيل البوت (النهاية التي كانت مقطوعة)
 if __name__ == '__main__':
-    main()
+    print("جاري تهيئة قاعدة البيانات...")
+    init_db()
+    print("تم تشغيل البوت بنجاح! 🚀")
+    # تشغيل البوت بشكل مستمر لتلقي الرسائل
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+
