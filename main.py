@@ -1,4 +1,4 @@
-import asyncio
+Enterimport asyncio
 import os
 import random
 import telebot
@@ -1467,11 +1467,9 @@ def send_welcome(message):
     user_exists = cursor.fetchone()
     
     if not user_exists:
-        # تسجيل المستخدم بمعلوماته الأساسية
         cursor.execute('INSERT INTO users (user_id, role) VALUES (?, ?)', (user_id, 'user'))
         conn.commit()
         
-        # إرسال إشعار للمالك
         try:
             bot.send_message(OWNER_ID, f"🚨 **مستخدم جديد دخل للبوت!**\n\n👤 الاسم: {username}\n🆔 الآيدي: `{user_id}`", parse_mode="Markdown")
         except Exception as e:
@@ -1479,8 +1477,15 @@ def send_welcome(message):
             
     conn.close()
 
-    # رسالة ترحيب عادية بدون طلب الرقم
-    bot.reply_to(message, "أهلاً بك في البوت! 🌟\nيمكنك الآن استخدام الأزرار والخدمات مباشرة بحرية.")
+    # 1. إنشاء لوحة المفاتيح الرئيسية للخدمات
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("بدء الاستخراج 🚀", "خدمات البوت ⚙️")
+    
+    # 2. إظهار زر لوحة الأدمن فقط إذا كان المستخدم هو المالك
+    if user_id == OWNER_ID:
+        markup.add("👑 لوحة التحكم")
+
+    bot.reply_to(message, "أهلاً بك في البوت! 🌟\nاختر من الأزرار التالية للبدء:", reply_markup=markup)
 
 
 @bot.message_handler(func=lambda message: message.text == "خدمات البوت ⚙️" or message.text == "بدء الاستخراج")
