@@ -1420,91 +1420,191 @@ async def owner_toggle_free_handler(event):
         [Button.inline("🔙 رجوع للوحة المالك", data=b'owner_panel')]
     ])
 
-# التشغيل الرئيسي للبوت
+import os
 import sqlite3
 import telebot
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineButton
 
-# 1. إعداد توكن البوت
-BOT_TOKEN = '8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ'
+# جلب الإعدادات والتوكنات مع قيم افتراضية احتياطية
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ضع_توكن_البوت_هنا")
+OWNER_ID = int(os.getenv("OWNER_ID", 123456789)) # ضع آيدي المالك الخاص بك هنا
+
 bot = telebot.TeleBot(BOT_TOKEN)
+DB_NAME = "bot_database.db"
 
-# 2. إعداد قاعدة البيانات (SQLite)
+# تهيئة قاعدة البيانات والجداول المطلوبة
 def init_db():
-    conn = sqlite3.connect('bot_database.db')
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # إنشاء جدول المستخدمين إذا لم يكن موجوداً
+    # جدول المستخدمين
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             phone_number TEXT,
             api_id TEXT,
             api_hash TEXT,
-            session_string TEXT
+            role TEXT DEFAULT 'user'
+        )
+    ''')
+    # جدول الاشتراك الإجباري
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS forced_subs (
+            chat_id TEXT PRIMARY KEY,
+            chat_name TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
-# 3. كلاس استخراج بيانات تيليجرام
-class TelegramAPIExtractor:
-    def __init__(self, phone_number):
-        self.phone_number = phone_number
-        # هنا يمكنك إضافة إعدادات الاتصال (requests أو Telethon)
-
-    def get_api_credentials(self):
-        """
-        هذه الدالة تحتوي على منطق استخراج الـ API ID و API Hash 
-        من موقع my.telegram.org أو عبر مكتبة Telethon.
-        """
-        # تم وضع بيانات وهمية كمثال للتوضيح. ضع كود الاستخراج الفعلي هنا.
-        extracted_api_id = "1234567"
-        extracted_api_hash = "abcdef1234567890abcdef1234567890"
-        
-        return extracted_api_id, extracted_api_hash
-
-# 4. دوال التعامل مع قاعدة البيانات
-def save_user_data(user_id, phone, api_id, api_hash):
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR REPLACE INTO users (user_id, phone_number, api_id, api_hash)
-        VALUES (?, ?, ?, ?)
-    ''', (user_id, phone, api_id, api_hash))
-    conn.commit()
-    conn.close()
-
-# 5. أوامر البوت
+# 1. أمر /start (يظهر لأي شخص بدون اشتراط الرقم، ويشعر المالك بدخول مستخدم جديد)
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "أهلاً بك! 🌟\nأرسل رقم هاتفك مع الرمز الدولي (مثال: +964...) للبدء باستخراج البيانات.")
-
-@bot.message_handler(func=lambda message: message.text.startswith('+'))
-def handle_phone_number(message):
     user_id = message.from_user.id
-    phone_number = message.text.strip()
+    username = message.from_user.username or message.from_user.first_name
     
-    bot.reply_to(message, "⏳ جاري معالجة الطلب واستخراج البيانات...")
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+    user_exists = cursor.fetchone()
     
-    try:
-        # استخدام الكلاس لاستخراج البيانات
-        extractor = TelegramAPIExtractor(phone_number)
-        api_id, api_hash = extractor.get_api_credentials()
+    if not user_exists:
+        # تسجيل المستخدم مبدئياً بدون رقم هاتف لمعرفة أنه دخل للبوت
+        cursor.execute('INSERT INTO users (user_id, role) VALUES (?, ?)', (user_id, 'user'))
+        conn.commit()
         
-        # حفظ البيانات في SQLite
-        save_user_data(user_id, phone_number, api_id, api_hash)
-        
-        # إرسال النتيجة للمستخدم
-        response_msg = f"✅ تم استخراج البيانات بنجاح وحفظها بقاعدة البيانات:\n\n**API ID:** `{api_id}`\n**API Hash:** `{api_hash}`"
-        bot.send_message(user_id, response_msg, parse_mode="Markdown")
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ حدث خطأ أثناء الاستخراج: {str(e)}")
+        # إرسال إشعار للمالك بأن شخصاً جديداً دخل للبوت
+        try:
+            bot.send_message(OWNER_ID, f"🚨 **مستخدم جديد دخل للبوت!**\n\n👤 الاسم: {username}\n🆔 الآيدي: `{user_id}`", parse_mode="Markdown")
+        except Exception as e:
+            print(f"فشل إرسال الإشعار للمالك: {e}")
+            
+    conn.close()
 
-# 6. تشغيل البوت (النهاية التي كانت مقطوعة)
+    # إنشاء لوحة مفاتيح تطلب رقم الهاتف في حال اراد استخدام الخدمات
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add(KeyboardButton("شارك رقم هاتفك 📱", request_contact=True))
+    
+    bot.reply_to(message, "أهلاً بك في البوت! 🌟\nللاستفادة من خدمات البوت واستخدام الأزرار، يرجى مشاركة رقم هاتفك أولاً:", reply_markup=markup)
+
+# 2. استقبال رقم الهاتف (عن طريق الزر أو كتابة الرقم)
+@bot.message_handler(content_types=['contact'])
+def handle_contact(message):
+    user_id = message.from_user.id
+    phone = message.contact.phone_number
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET phone_number = ? WHERE user_id = ?', (phone, user_id))
+    conn.commit()
+    conn.close()
+    
+    bot.reply_to(message, "✅ تم تسجيل رقم هاتفك بنجاح! يمكنك الآن استخدام أزرار وخدمات البوت.", reply_markup=telebot.types.ReplyKeyboardRemove())
+
+@bot.message_handler(func=lambda message: message.text and message.text.startswith('+'))
+def handle_phone_text(message):
+    user_id = message.from_user.id
+    phone = message.text.strip()
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE users SET phone_number = ? WHERE user_id = ?', (phone, user_id))
+    conn.commit()
+    conn.close()
+    
+    bot.reply_to(message, "✅ تم حفظ رقم هاتفك بنجاح!")
+
+# 3. التحقق من تسجيل الرقم قبل تنفيذ أي زر أو خدمة
+def check_user_registered(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT phone_number FROM users WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result and result[0] is not None
+
+# مثال على زر أو خدمة تتطلب تسجيل الرقم أولاً:
+@bot.message_handler(func=lambda message: message.text == "خدمات البوت ⚙️" or message.text == "بدء الاستخراج")
+def restricted_service(message):
+    user_id = message.from_user.id
+    if not check_user_registered(user_id):
+        markup = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.add(KeyboardButton("شارك رقم هاتفك 📱", request_contact=True))
+        bot.reply_to(message, "⚠️ عذراً, لا يمكنك استخدام هذا الزر أو الخدمة حتى تقوم بتسجيل رقم هاتفك أولاً!", reply_markup=markup)
+        return
+    
+    bot.reply_to(message, "مرحباً بك في الخدمة المطلوبة جاري التنفيذ...")
+
+# 4. أوامر المالك: إدارة الاشتراك الإجباري
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != OWNER_ID:
+        return
+    
+    markup = ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("➕ اضافة قناة/مجموعة", "➖ حذف قناة/مجموعة")
+    markup.add("📋 القنوات المضافة", "رجوع")
+    bot.reply_to(message, "مرحباً بك في لوحة تحكم المالك:", reply_markup=markup)
+
+@bot.message_handler(func=lambda message: message.text == "📋 القنوات المضافة" and message.from_user.id == OWNER_ID)
+def list_forced_subs(message):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('SELECT chat_id, chat_name FROM forced_subs')
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        bot.reply_to(message, "لا توجد أي قنوات أو مجموعات مضافة حالياً للاشتراك الإجباري.")
+        return
+        
+    text = "📋 **قنوات ومجموعات الاشتراك الإجباري:**\n\n"
+    for r in rows:
+        text += f"📌 الاسم: {r[1]} \n🆔 المعرف: `{r[0]}`\n-------------------\n"
+    bot.reply_to(message, text, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda message: message.text == "➕ اضافة قناة/مجموعة" and message.from_user.id == OWNER_ID)
+def add_sub_step(message):
+    msg = bot.reply_to(message, "أرسل معرف القناة أو المجموعة (مثال: `@ChannelUsername` أو الآيدي) مع اسم لها بهذا الشكل:\n`ID OR Username | Name`", parse_mode="Markdown")
+    bot.register_next_step_handler(msg, save_new_sub)
+
+def save_new_sub(message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        parts = message.text.split('|')
+        chat_id = parts[0].strip()
+        chat_name = parts[1].strip() if len(parts) > 1 else "قناة/مجموعة"
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR REPLACE INTO forced_subs (chat_id, chat_name) VALUES (?, ?)', (chat_id, chat_name))
+        conn.commit()
+        conn.close()
+        
+        bot.reply_to(message, f"✅ تمت الإضافة بنجاح:\n{chat_name} ({chat_id})")
+    except Exception as e:
+        bot.reply_to(message, f"❌ حدث خطأ في الصيغة. تأكد من استخدام الرمز `|`\n الخطأ: {e}", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda message: message.text == "➖ حذف قناة/مجموعة" and message.from_user.id == OWNER_ID)
+def remove_sub_step(message):
+    msg = bot.reply_to(message, "أرسل معرف القناة أو المجموعة المراد حذفها فقط (مثال: `@ChannelUsername`):")
+    bot.register_next_step_handler(msg, delete_sub)
+
+def delete_sub(message):
+    if message.from_user.id != OWNER_ID:
+        return
+    chat_id = message.text.strip()
+    
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM forced_subs WHERE chat_id = ?', (chat_id,))
+    conn.commit()
+    conn.close()
+    
+    bot.reply_to(message, f"🗑️ تم حذف المعرف `{chat_id}` من قائمة الاشتراك الإجباري.", parse_mode="Markdown")
+
 if __name__ == '__main__':
-    print("جاري تهيئة قاعدة البيانات...")
     init_db()
-    print("تم تشغيل البوت بنجاح! 🚀")
-    # تشغيل البوت بشكل مستمر لتلقي الرسائل
+    print("البوت يعمل الآن بكفاءة... 🚀")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
 
