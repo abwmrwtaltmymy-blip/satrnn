@@ -5,6 +5,7 @@ import telebot
 import re
 import time
 import logging
+import sqlite3
 import aiohttp
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,7 @@ OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 # استخدام os.getenv مع قيمك الحقيقية كبديل في حال فشل قراءة المتغيرات
 api_id_str = os.getenv("API_ID", "12345678") # امسح الأرقام وضع الـ API ID الخاص بك
 api_id = int(api_id_str)
+import sqlite3
 
 api_hash = os.getenv("API_HASH", "abcdef1234567890") # امسح النص وضع الـ API HASH الخاص بك
 
