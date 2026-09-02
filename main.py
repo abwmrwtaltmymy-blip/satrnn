@@ -34,15 +34,13 @@ bot_token = os.getenv("BOT_TOKEN", "")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
 
-import os
+# استخدام os.getenv مع قيمك الحقيقية كبديل في حال فشل قراءة المتغيرات
+api_id_str = os.getenv("API_ID", "12345678") # امسح الأرقام وضع الـ API ID الخاص بك
+api_id = int(api_id_str)
 
-# سحب المتغيرات من إعدادات Railway
-# نستخدم int() لتحويل الـ api_id إلى رقم لأن المكتبة ترفضه كنص
-api_id = int(os.environ.get("API_ID"))
-api_hash = os.environ.get("API_HASH")
+api_hash = os.getenv("API_HASH", "abcdef1234567890") # امسح النص وضع الـ API HASH الخاص بك
 
-# السطر الذي كان يسبب المشكلة (الآن سيعمل بشكل طبيعي)
-bot = TelegramClient("makKser_bot", api_id, api_hash)
+bot = TelegramClient("makkster_bot", api_id, api_hash)
 
 
 # المسارات والأساسيات
