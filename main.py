@@ -4,8 +4,8 @@ import random
 import re
 import time
 import logging
-import aiohttp # مكتبة مفقودة
-from bs4 import BeautifulSoup # مكتبة مفقودة
+import aiohttp 
+from bs4 import BeautifulSoup 
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from telethon import TelegramClient, events, Button, errors, functions, types
@@ -28,19 +28,12 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# استدعاء المتغيرات لتجنب خطأ NameError
-api_id = 36781759
-api_hash = "31a2abacece3f047a878d001aa3fbd95"
-bot_token = "8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ"
-OWNER_ID = 7367921416
-
+api_id = int(os.getenv("API_ID", "0"))
+api_hash = os.getenv("API_HASH", "")
+bot_token = os.getenv("BOT_TOKEN", "")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
 bot = TelegramClient("makkster_bot", api_id, api_hash)
-
-from dotenv import load_dotenv
-import aiosqlite
-
-load_dotenv()
 
 class TelegramAPIExtractor:
     def __init__(self, phone):
@@ -68,12 +61,10 @@ class TelegramAPIExtractor:
             api_id_input = soup.find('input', {'name': 'api_id'})
             
             if api_id_input:
-                # الحساب يمتلك API مسبقاً
                 api_id = api_id_input.get('value')
                 api_hash = soup.find('input', {'name': 'api_hash'}).get('value')
                 return int(api_id), api_hash
             else:
-                # إنشاء تطبيق جديد عبر تقديم طلب POST إلى /apps/create
                 hash_val = soup.find('input', {'name': 'hash'}).get('value')
                 create_data = {
                     "hash": hash_val,
@@ -84,79 +75,7 @@ class TelegramAPIExtractor:
                     "app_desc": ""
                 }
                 await self.session.post(f"{self.base_url}/apps/create", data=create_data)
-                return await self.extract_api_keys() # إعادة الاستخراج بعد الإنشاء
-
-@bot.on(events.CallbackQuery(data=b"add_account"))
-async def add_account_handler(event):
-    if not await is_authorized(event.sender_id): return
-    await event.delete()
-    
-    async with bot.conversation(event.chat_id) as conv:
-        await conv.send_message("📱 **أدخل رقم هاتف الحساب مع رمز الدولة (+964...)**:")
-        try:
-            phone_msg = await conv.get_response(timeout=300)
-        except asyncio.TimeoutError:
-            await conv.send_message("⏳ انتهى وقت الانتظار.")
-            return
-            
-        if phone_msg.text.strip().startswith('/'):
-            await conv.send_message("❌ تم الإلغاء.")
-            return
-            
-        phone = "".join(c for c in phone_msg.text if c.isdigit() or c == '+')
-        
-        await conv.send_message("⏳ جاري إنشاء/استخراج مفاتيح API الخاصة بحسابك...")
-        extractor = TelegramAPIExtractor(phone)
-        await extractor.request_code()
-        
-        await conv.send_message("📩 **أدخل كود الدخول المرسل لحسابك (الخاص بـ my.telegram.org):**")
-        try:
-            web_code_msg = await conv.get_response(timeout=300)
-        except asyncio.TimeoutError:
-            return
-            
-        await extractor.login(web_code_msg.text.strip())
-        user_api_id, user_api_hash = await extractor.extract_api_keys()
-        
-        session_name = f"acc_{phone.replace('+', '')}"
-        session_path = os.path.join(SESSIONS_DIR, session_name)
-        
-        async with managed_client(session_path, user_api_id, user_api_hash) as user_client:
-            try:
-                send_code = await user_client.send_code_request(phone)
-            except Exception as e:
-                await conv.send_message(f"❌ حدث خطأ أثناء إرسال الكود: {e}")
-                return
-
-            await conv.send_message("📩 **تم إرسال كود التحقق إلى حسابك في تيليجرام. أرسل الكود مع مسافات بين الأرقام:**")
-            try:
-                code_msg = await conv.get_response(timeout=300)
-            except asyncio.TimeoutError:
-                return
-                
-            code = "".join(c for c in code_msg.text if c.isdigit())
-            
-            try:
-                await user_client.sign_in(phone=phone, code=code, phone_code_hash=send_code.phone_code_hash)
-            except errors.SessionPasswordNeededError:
-                await conv.send_message("🔒 **أدخل كلمة المرور (التحقق بخطوتين):**")
-                try:
-                    pass_msg = await conv.get_response(timeout=300)
-                    password = pass_msg.text.replace(" ", "").strip()
-                    await user_client.sign_in(password=password)
-                except Exception as e:
-                    await conv.send_message(f"❌ فشل تسجيل الدخول بكلمة المرور: {e}")
-                    return
-            except Exception as e:
-                await conv.send_message(f"❌ فشل تسجيل الدخول: {e}")
-                return
-                
-            me = await user_client.get_me()
-            safe_name = clean_account_name(me.first_name)
-            
-            await add_account_unified(phone, session_name, 'sender', event.sender_id, safe_name, me.id)
-            await conv.send_message(f"✅ **تم تسجيل دخول الحساب بنجاح!**\n👤 الاسم: {safe_name}\n🆔 الأيدي: `{me.id}`")
-
+                return await self.extract_api_keys()
 
 DB_NAME = "bot_database.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -182,7 +101,6 @@ async def init_db():
                 date TEXT
             )
         ''')
-        
         await db.execute('''
             CREATE TABLE IF NOT EXISTS accounts (
                 phone TEXT,
@@ -195,20 +113,17 @@ async def init_db():
                 PRIMARY KEY (phone, user_id)
             )
         ''')
-        
         await db.execute('''
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
         ''')
-
         await db.execute('''
             CREATE TABLE IF NOT EXISTS blacklisted_groups (
                 identifier TEXT PRIMARY KEY
             )
         ''')
-
         await db.execute('''
             CREATE TABLE IF NOT EXISTS report_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,15 +132,12 @@ async def init_db():
                 report_text TEXT
             )
         ''')
-
         await db.execute('''
             CREATE TABLE IF NOT EXISTS owner_chats (
                 chat_id INTEGER PRIMARY KEY,
                 last_interaction TIMESTAMP
             )
         ''')
-        
-        # الجداول الجديدة لتتبع التقدم
         await db.execute('''
             CREATE TABLE IF NOT EXISTS progress_tracking (
                 task_id TEXT PRIMARY KEY,
@@ -415,13 +327,10 @@ async def send_with_client(client, target_entity, kalisha_data):
     except errors.FloodWaitError as e:
         await asyncio.sleep(e.seconds + 2)
         return False, f"flood_wait_{e.seconds}"
-
     except errors.PeerFloodError:
         return False, "peer_flood"
-
     except errors.UserPrivacyRestrictedError:
         return False, "privacy_closed"
-
     except Exception as e:
         if "ALLOW_PAYMENT_REQUIRED" in str(e):
             return False, "premium_required"
@@ -496,14 +405,17 @@ async def ownership_protection_handler(event):
 @bot.on(events.NewMessage(pattern=r"^/start(?: (.*))?$"))
 async def start_handler(event):
     user = await event.get_sender()
-    user_id_str = str(event.sender_id)
-    ref_id = event.pattern_match.group(1)
+    
+    # تفادي الخطأ في حال تم استدعاء الدالة بشكل خاطئ بطريقة الاستخراج الآمن
+    ref_id = None
+    if hasattr(event, 'pattern_match') and event.pattern_match:
+        try:
+            ref_id = event.pattern_match.group(1)
+        except (IndexError, AttributeError):
+            pass
 
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute(
-            "SELECT user_id FROM users WHERE user_id = ?",
-            (event.sender_id,)
-        ) as cursor:
+        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (event.sender_id,)) as cursor:
             is_new_user = await cursor.fetchone() is None
 
         if is_new_user:
@@ -520,39 +432,23 @@ async def start_handler(event):
 
             if ref_id and ref_id.isdigit() and int(ref_id) != event.sender_id:
                 ref_id_int = int(ref_id)
-
-                async with db.execute(
-                    "SELECT balance FROM users WHERE user_id = ?",
-                    (ref_id_int,)
-                ) as cursor:
+                async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
                     ref_row = await cursor.fetchone()
 
                 if ref_row:
-                    await db.execute(
-                        "UPDATE users SET balance = balance + 1 WHERE user_id = ?",
-                        (ref_id_int,)
-                    )
+                    await db.execute("UPDATE users SET balance = balance + 1 WHERE user_id = ?", (ref_id_int,))
                     await db.commit()
-
-                    async with db.execute(
-                        "SELECT balance FROM users WHERE user_id = ?",
-                        (ref_id_int,)
-                    ) as cursor:
+                    async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
                         new_bal = (await cursor.fetchone())[0]
 
                     if new_bal % 5 == 0:
-                        await db.execute(
-                            "UPDATE users SET role = 'trial' WHERE user_id = ?",
-                            (ref_id_int,)
-                        )
+                        await db.execute("UPDATE users SET role = 'trial' WHERE user_id = ?", (ref_id_int,))
                         await db.commit()
-
                         try:
                             await bot.send_message(
                                 ref_id_int,
                                 "🎉 **مبروك!** لقد قام 5 أشخاص بالدخول للبوت عبر رابط الإحالة الخاص بك.\n\n"
-                                "🎁 **تم منحك تجربة مجانية تلقائياً!** يمكنك الآن استخدام البوت لمرة واحدة مجاناً. "
-                                "أرسل /start للبدء."
+                                "🎁 **تم منحك تجربة مجانية تلقائياً!** يمكنك الآن استخدام البوت لمرة واحدة مجاناً. أرسل /start للبدء."
                             )
                         except Exception as e:
                             logger.error(f"خطأ في إرسال التجربة المجانية: {e}")
@@ -573,7 +469,6 @@ async def start_handler(event):
     if not await is_authorized(event.sender_id):
         bot_info = await bot.get_me()
         ref_link = f"https://t.me/{bot_info.username}?start={event.sender_id}"
-
         await event.respond(
             "❌ **عذراً، أنت لا تملك صلاحية استخدام هذا البوت.**\n\n"
             "💎 **للحصول على الصلاحية لديك خياران:**\n\n"
@@ -588,37 +483,13 @@ async def start_handler(event):
         return
 
     buttons = [
-        [
-            Button.inline(
-                "🔍 خمط الأعضاء (جمع وتصفية)",
-                b"main_scrape_menu"
-            )
-        ],
-        [
-            Button.inline(
-                "🔥 الشد التلقائي (الريبورتات)",
-                b"main_report_menu"
-            )
-        ],
-        [
-            Button.inline(
-                "➕ إضافة حساب مساعد",
-                b"add_account"
-            ),
-            Button.inline(
-                "📂 إدارة الحسابات",
-                b"page_accounts_0"
-            )
-        ]
+        [Button.inline("🔍 خمط الأعضاء (جمع وتصفية)", b"main_scrape_menu")],
+        [Button.inline("🔥 الشد التلقائي (الريبورتات)", b"main_report_menu")],
+        [Button.inline("➕ إضافة حساب مساعد", b"add_account"), Button.inline("📂 إدارة الحسابات", b"page_accounts_0")]
     ]
 
     if event.sender_id == OWNER_ID:
-        buttons.append([
-            Button.inline(
-                "👑 لوحة تحكم المالك",
-                b"owner_panel"
-            )
-        ])
+        buttons.append([Button.inline("👑 لوحة تحكم المالك", b"owner_panel")])
 
     await event.respond(
         "👋 **أهلاً بك في بوت الترويج التلقائي المطور**\n\n"
@@ -626,7 +497,7 @@ async def start_handler(event):
         buttons=buttons
     )
 
-@bot.on(events.CallbackQuery(data=b"main_scrape_menu"))
+@bot.on(events.CallbackQuery(pattern=b"^main_scrape_menu$"))
 async def main_scrape_menu_handler(event):
     if not await is_authorized(event.sender_id): return
     buttons = [
@@ -637,7 +508,7 @@ async def main_scrape_menu_handler(event):
     ]
     await event.edit("🔍 **قسم خمط الأعضاء والترويج**\n\nاختر الوظيفة المطلوبة:", buttons=buttons)
 
-@bot.on(events.CallbackQuery(data=b"main_report_menu"))
+@bot.on(events.CallbackQuery(pattern=b"^main_report_menu$"))
 async def main_report_menu_handler(event):
     if not await is_authorized(event.sender_id): return
     buttons = [
@@ -651,7 +522,7 @@ async def main_report_menu_handler(event):
     ]
     await event.edit("🔥 **قسم الشد التلقائي**\n\nاختر من القائمة أدناه لإعداد الحملة:", buttons=buttons)
 
-@bot.on(events.CallbackQuery(data=b"report_set_type"))
+@bot.on(events.CallbackQuery(pattern=b"^report_set_type$"))
 async def report_set_type_handler(event):
     if not await is_authorized(event.sender_id): return
     buttons = [
@@ -664,18 +535,18 @@ async def report_set_type_handler(event):
     ]
     await event.edit("⚠️ **اختر نوع المخالفة الذي سيتم التبليغ عنه:**", buttons=buttons)
 
-@bot.on(events.CallbackQuery(pattern=r"^rtype_(.*)$"))
+@bot.on(events.CallbackQuery(pattern=b"^rtype_(.*)$"))
 async def report_save_type_handler(event):
     if not await is_authorized(event.sender_id): return
     rtype = event.pattern_match.group(1).decode('utf-8')
     await set_setting("report_type", rtype)
     await event.edit(f"✅ **تم تحديد نوع البلاغ بنجاح.**\nالنوع المختار: `{rtype}`", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
 
-@bot.on(events.CallbackQuery(data=b"set_kalisha"))
+@bot.on(events.CallbackQuery(pattern=b"^set_kalisha$"))
 async def set_kalisha_handler(event):
     if not await is_authorized(event.sender_id): return
+    await event.answer()
     await event.delete()
-    
     async with bot.conversation(event.chat_id) as conv:
         await conv.send_message(
             "📝 **أرسل الكليشة الجديدة الآن:**\n\n"
@@ -697,8 +568,8 @@ async def set_kalisha_handler(event):
         if old_media and os.path.exists(old_media):
             try:
                 os.remove(old_media)
-            except Exception as e:
-                logger.error(f"خطأ في حذف الميديا: {e}")
+            except Exception:
+                pass
         
         if msg.media:
             status_msg = await conv.send_message("⏳ جاري حفظ الوسائط، يرجى الانتظار...")
@@ -714,113 +585,62 @@ async def set_kalisha_handler(event):
         media_status = "مع وسائط 🖼️/🎥" if msg.media else "نص فقط 📝"
         
         await conv.send_message(
-            f"✅ **تم حفظ الكليشة بنجاح!**\n\n"
-            f"نوع الكليشة: {media_status}\n"
-            f"النص الحالي:\n{current_text}\n\n"
-            f"🛡️ **نظام الحماية ضد الحظر التلقائي:**\n"
-            f"هل تريد تفعيل ميزة التعديل الطفيف تلقائياً؟",
+            f"✅ **تم حفظ الكليشة بنجاح!**\n\nنوع الكليشة: {media_status}\nالنص الحالي:\n{current_text}\n\n"
+            f"🛡️ **نظام الحماية ضد الحظر التلقائي:**\nهل تريد تفعيل ميزة التعديل الطفيف تلقائياً؟",
             buttons=[
                 [Button.inline("🟢 تفعيل ميزة التعديل الطفيف", b"mutate_on")],
                 [Button.inline("🔴 إرسال النص الأصلي بدون تغيير", b"mutate_off")]
             ]
         )
 
-@bot.on(events.CallbackQuery(data=b"report_add_target"))
-async def report_add_target_handler(event):
+@bot.on(events.CallbackQuery(pattern=b"^add_account$"))
+async def add_account_handler(event):
     if not await is_authorized(event.sender_id): return
+    await event.answer()
     await event.delete()
     async with bot.conversation(event.chat_id) as conv:
-        await conv.send_message(
-            "🔗 **أرسل الرابط أو اليوزر للمجموعة أو القناة أو الحساب المستهدف.**\n\n"
-            "*لإلغاء العملية أرسل /cancel*"
-        )
-        try: msg = await conv.get_response(timeout=120)
-        except asyncio.TimeoutError: return
-        
-        if msg.text.strip().startswith('/'):
-            await conv.send_message("❌ تم الإلغاء.", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-            return
-            
-        await set_setting("report_target", msg.text.strip())
-        await conv.send_message("✅ **تم حفظ الهدف بنجاح وسرية.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-
-@bot.on(events.CallbackQuery(data=b"report_add_text"))
-async def report_add_text_handler(event):
-    if not await is_authorized(event.sender_id): return
-    await event.delete()
-    async with bot.conversation(event.chat_id) as conv:
-        await conv.send_message("📝 **أرسل كليشة البلاغ التي ستستخدمها الحسابات داخلياً:**\n\n*لإلغاء العملية أرسل /cancel*")
-        try: msg = await conv.get_response(timeout=120)
-        except asyncio.TimeoutError: return
-        
-        if msg.text.strip().startswith('/'): return
-            
-        await set_setting("report_text", msg.text.strip())
-        await conv.send_message("✅ **تم حفظ كليشة البلاغ بسريّة تامة.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-
-@bot.on(events.CallbackQuery(data=b"report_add_msgs"))
-async def report_add_msgs_handler(event):
-    if not await is_authorized(event.sender_id): return
-    await event.delete()
-    async with bot.conversation(event.chat_id) as conv:
-        await conv.send_message(
-            "📩 **أرسل روابط الرسائل التي تريد الشد عليها مباشرة (رابط في كل سطر):**\n"
-            "*لإلغاء العملية أرسل /cancel*"
-        )
-        try: msg = await conv.get_response(timeout=120)
-        except asyncio.TimeoutError: return
-        
-        if msg.text.strip().startswith('/'):
-            await conv.send_message("❌ تم الإلغاء.", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-            return
-            
-        messages_list = [line.strip() for line in msg.text.splitlines() if line.strip().startswith("http")]
-        await set_setting("report_messages", "\n".join(messages_list))
-        await conv.send_message(f"✅ **تم حفظ {len(messages_list)} رسالة للشد عليها.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-
-@bot.on(events.CallbackQuery(data=b"owner_add_rep_acc"))
-async def owner_add_rep_acc_handler(event):
-    if event.sender_id != OWNER_ID: return
-    await event.delete()
-    
-    async with bot.conversation(event.chat_id) as conv:
-        await conv.send_message(
-            "📱 **أدخل رقم هاتف حساب الشد مع وضع مسافة بين كل رقم ورمز الدولة**\n"
-            "(مثال: `+ 9 6 4 7 7 1 2 3 4 5 6 7 8`):"
-        )
+        await conv.send_message("📱 **أدخل رقم هاتف الحساب مع رمز الدولة (+964...)**:")
         try:
             phone_msg = await conv.get_response(timeout=300)
         except asyncio.TimeoutError:
             await conv.send_message("⏳ انتهى وقت الانتظار.")
             return
-
-        if phone_msg.text.strip().startswith('/'):
+            
+        if phone_msg.text and phone_msg.text.strip().startswith('/'):
             await conv.send_message("❌ تم الإلغاء.")
             return
             
-        phone = "".join(c for c in phone_msg.text if c.isdigit() or c == '+')
-        session_name = f"rep_acc_{phone.replace('+', '')}"
+        phone = "".join(c for c in (phone_msg.text or "") if c.isdigit() or c == '+')
+        await conv.send_message("⏳ جاري إنشاء/استخراج مفاتيح API الخاصة بحسابك...")
+        extractor = TelegramAPIExtractor(phone)
+        await extractor.request_code()
+        
+        await conv.send_message("📩 **أدخل كود الدخول المرسل لحسابك (الخاص بـ my.telegram.org):**")
+        try:
+            web_code_msg = await conv.get_response(timeout=300)
+        except asyncio.TimeoutError:
+            return
+            
+        await extractor.login(web_code_msg.text.strip())
+        user_api_id, user_api_hash = await extractor.extract_api_keys()
+        
+        session_name = f"acc_{phone.replace('+', '')}"
         session_path = os.path.join(SESSIONS_DIR, session_name)
         
-        async with managed_client(session_path, api_id, api_hash) as user_client:
+        async with managed_client(session_path, user_api_id, user_api_hash) as user_client:
             try:
                 send_code = await user_client.send_code_request(phone)
             except Exception as e:
                 await conv.send_message(f"❌ حدث خطأ أثناء إرسال الكود: {e}")
                 return
 
-            await conv.send_message("📩 **تم إرسال كود التحقق إلى حسابك. أرسل الكود مع مسافات بين الأرقام:**")
+            await conv.send_message("📩 **تم إرسال كود التحقق إلى حسابك في تيليجرام. أرسل الكود مع مسافات بين الأرقام:**")
             try:
                 code_msg = await conv.get_response(timeout=300)
             except asyncio.TimeoutError:
-                await conv.send_message("⏳ انتهى وقت الانتظار.")
                 return
                 
-            if code_msg.text.strip().startswith('/'):
-                await conv.send_message("❌ تم الإلغاء.")
-                return
-                
-            code = "".join(c for c in code_msg.text if c.isdigit())
+            code = "".join(c for c in (code_msg.text or "") if c.isdigit())
             
             try:
                 await user_client.sign_in(phone=phone, code=code, phone_code_hash=send_code.phone_code_hash)
@@ -828,11 +648,7 @@ async def owner_add_rep_acc_handler(event):
                 await conv.send_message("🔒 **أدخل كلمة المرور (التحقق بخطوتين):**")
                 try:
                     pass_msg = await conv.get_response(timeout=300)
-                except asyncio.TimeoutError:
-                    await conv.send_message("⏳ انتهى وقت الانتظار.")
-                    return
-                password = pass_msg.text.replace(" ", "").strip()
-                try:
+                    password = (pass_msg.text or "").replace(" ", "").strip()
                     await user_client.sign_in(password=password)
                 except Exception as e:
                     await conv.send_message(f"❌ فشل تسجيل الدخول بكلمة المرور: {e}")
@@ -844,28 +660,130 @@ async def owner_add_rep_acc_handler(event):
             me = await user_client.get_me()
             safe_name = clean_account_name(me.first_name)
             
-            await add_account_unified(phone, session_name, 'report', event.sender_id, safe_name, me.id)
-            await conv.send_message(f"✅ **تم تسجيل دخول حساب الشد بنجاح!**\n👤 الاسم: {safe_name}\n🆔 الأيدي: `{me.id}`", buttons=[[Button.inline("🔙 رجوع لللوحة", b"owner_panel")]])
+            await add_account_unified(phone, session_name, 'sender', event.sender_id, safe_name, me.id)
+            await conv.send_message(f"✅ **تم تسجيل دخول الحساب بنجاح!**\n👤 الاسم: {safe_name}\n🆔 الأيدي: `{me.id}`")
 
-@bot.on(events.CallbackQuery(data=b"owner_list_rep_acc"))
+@bot.on(events.CallbackQuery(pattern=b"^report_add_target$"))
+async def report_add_target_handler(event):
+    if not await is_authorized(event.sender_id): return
+    await event.answer()
+    await event.delete()
+    async with bot.conversation(event.chat_id) as conv:
+        await conv.send_message("🔗 **أرسل الرابط أو اليوزر للمجموعة أو القناة أو الحساب المستهدف.**\n\n*لإلغاء العملية أرسل /cancel*")
+        try: msg = await conv.get_response(timeout=120)
+        except asyncio.TimeoutError: return
+        
+        if msg.text and msg.text.strip().startswith('/'):
+            await conv.send_message("❌ تم الإلغاء.", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+            return
+            
+        await set_setting("report_target", msg.text.strip())
+        await conv.send_message("✅ **تم حفظ الهدف بنجاح وسرية.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+
+@bot.on(events.CallbackQuery(pattern=b"^report_add_text$"))
+async def report_add_text_handler(event):
+    if not await is_authorized(event.sender_id): return
+    await event.answer()
+    await event.delete()
+    async with bot.conversation(event.chat_id) as conv:
+        await conv.send_message("📝 **أرسل كليشة البلاغ التي ستستخدمها الحسابات داخلياً:**\n\n*لإلغاء العملية أرسل /cancel*")
+        try: msg = await conv.get_response(timeout=120)
+        except asyncio.TimeoutError: return
+        
+        if msg.text and msg.text.strip().startswith('/'): return
+            
+        await set_setting("report_text", msg.text.strip())
+        await conv.send_message("✅ **تم حفظ كليشة البلاغ بسريّة تامة.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+
+@bot.on(events.CallbackQuery(pattern=b"^report_add_msgs$"))
+async def report_add_msgs_handler(event):
+    if not await is_authorized(event.sender_id): return
+    await event.answer()
+    await event.delete()
+    async with bot.conversation(event.chat_id) as conv:
+        await conv.send_message("📩 **أرسل روابط الرسائل التي تريد الشد عليها مباشرة (رابط في كل سطر):**\n*لإلغاء العملية أرسل /cancel*")
+        try: msg = await conv.get_response(timeout=120)
+        except asyncio.TimeoutError: return
+        
+        if msg.text and msg.text.strip().startswith('/'):
+            await conv.send_message("❌ تم الإلغاء.", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+            return
+            
+        messages_list = [line.strip() for line in msg.text.splitlines() if line.strip().startswith("http")]
+        await set_setting("report_messages", "\n".join(messages_list))
+        await conv.send_message(f"✅ **تم حفظ {len(messages_list)} رسالة للشد عليها.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+
+@bot.on(events.CallbackQuery(pattern=b"^owner_add_rep_acc$"))
+async def owner_add_rep_acc_handler(event):
+    if event.sender_id != OWNER_ID: return
+    await event.answer()
+    await event.delete()
+    async with bot.conversation(event.chat_id) as conv:
+        await conv.send_message("📱 **أدخل رقم هاتف حساب الشد مع وضع مسافة بين كل رقم ورمز الدولة**\n(مثال: `+ 9 6 4 7 ...`):")
+        try: phone_msg = await conv.get_response(timeout=300)
+        except asyncio.TimeoutError: return
+
+        if phone_msg.text and phone_msg.text.strip().startswith('/'):
+            await conv.send_message("❌ تم الإلغاء.")
+            return
+            
+        phone = "".join(c for c in (phone_msg.text or "") if c.isdigit() or c == '+')
+        session_name = f"rep_acc_{phone.replace('+', '')}"
+        session_path = os.path.join(SESSIONS_DIR, session_name)
+        
+        async with managed_client(session_path, api_id, api_hash) as user_client:
+            try:
+                send_code = await user_client.send_code_request(phone)
+            except Exception as e:
+                await conv.send_message(f"❌ حدث خطأ: {e}")
+                return
+
+            await conv.send_message("📩 **تم إرسال كود التحقق. أرسله مع مسافات بين الأرقام:**")
+            try: code_msg = await conv.get_response(timeout=300)
+            except asyncio.TimeoutError: return
+                
+            if code_msg.text and code_msg.text.strip().startswith('/'): return
+                
+            code = "".join(c for c in (code_msg.text or "") if c.isdigit())
+            try:
+                await user_client.sign_in(phone=phone, code=code, phone_code_hash=send_code.phone_code_hash)
+            except errors.SessionPasswordNeededError:
+                await conv.send_message("🔒 **أدخل كلمة المرور:**")
+                try: pass_msg = await conv.get_response(timeout=300)
+                except asyncio.TimeoutError: return
+                password = (pass_msg.text or "").replace(" ", "").strip()
+                try: await user_client.sign_in(password=password)
+                except Exception as e:
+                    await conv.send_message(f"❌ فشل الدخول: {e}")
+                    return
+            except Exception as e:
+                await conv.send_message(f"❌ فشل الدخول: {e}")
+                return
+                
+            me = await user_client.get_me()
+            safe_name = clean_account_name(me.first_name)
+            await add_account_unified(phone, session_name, 'report', event.sender_id, safe_name, me.id)
+            await conv.send_message(f"✅ **تم تسجيل الدخول!**\n👤 الاسم: {safe_name}\n🆔 الأيدي: `{me.id}`", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+
+@bot.on(events.CallbackQuery(pattern=b"^owner_list_rep_acc$"))
 async def owner_list_rep_acc_handler(event):
     if event.sender_id != OWNER_ID: return
     rep_accs = await get_all_accounts(event.sender_id, 'report')
-    await event.edit(f"📂 **عدد حسابات الشد المتوفرة حالياً:** `{len(rep_accs)}` حساب.", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+    await event.edit(f"📂 **عدد حسابات الشد المتوفرة:** `{len(rep_accs)}` حساب.", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
 
-@bot.on(events.CallbackQuery(data=b"report_status"))
+@bot.on(events.CallbackQuery(pattern=b"^report_status$"))
 async def report_status_handler(event):
     is_rep = await get_setting("is_reporting", "False")
     status = "🟢 فعّال (يتم الشد حالياً)" if is_rep == 'True' else "🔴 متوقف"
     count = await get_setting("report_count", "0")
     await event.edit(f"📊 **حالة الشد التلقائي:**\n\nالحالة: {status}\nعدد البلاغات المرسلة حتى الآن: `{count}`", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
 
-@bot.on(events.CallbackQuery(data=b"report_stop"))
+@bot.on(events.CallbackQuery(pattern=b"^report_stop$"))
 async def report_stop_handler(event):
     await set_setting("is_reporting", "False")
     await event.edit("⏸️ **تم إرسال أمر إيقاف الشد. ستتوقف الحسابات تدريجياً.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
 
-@bot.on(events.CallbackQuery(data=b"report_start"))
+@bot.on(events.CallbackQuery(pattern=b"^report_start$"))
 async def report_start_handler(event):
     target = await get_setting("report_target")
     msgs = await get_setting("report_messages")
@@ -875,33 +793,20 @@ async def report_start_handler(event):
         
     await set_setting("is_reporting", "True")
     await event.edit("▶️ **بدأت عملية الشد التلقائي في الخلفية...**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
-    
     asyncio.create_task(run_reporting_loop(event.sender_id))
 
 async def report_single_client(client, target_entity, report_reason, report_text, is_message=False, msg_ids=None):
     try:
         if is_message and msg_ids:
-            await client(functions.messages.ReportRequest(
-                target_entity,
-                msg_ids,
-                report_reason,
-                report_text
-            ))
+            await client(functions.messages.ReportRequest(target_entity, msg_ids, report_reason, report_text))
             return len(msg_ids)
         else:
-            await client(ReportPeerRequest(
-                target_entity,
-                report_reason,
-                report_text
-            ))
+            await client(ReportPeerRequest(target_entity, report_reason, report_text))
             return 1
     except errors.FloodWaitError as e:
-        logger.warning(f"FloodWaitError على حساب {getattr(client, 'account_name', '')}: {e.seconds} ثانية")
         await asyncio.sleep(e.seconds + 2)
         return 0
-    except Exception as e:
-        logger.error(f"خطأ في البلاغ من حساب {getattr(client, 'account_name', '')}: {e}")
-        return 0
+    except Exception: return 0
 
 async def run_reporting_loop(user_id):
     rep_accs = await get_all_accounts(user_id, 'report')
@@ -910,7 +815,6 @@ async def run_reporting_loop(user_id):
         
     if not rep_accs:
         await set_setting("is_reporting", "False")
-        logger.warning("لا توجد حسابات مضافة للشد. تم الإيقاف.")
         return
 
     rtype = await get_setting("report_type", "spam")
@@ -929,8 +833,7 @@ async def run_reporting_loop(user_id):
 
     while True:
         is_rep = await get_setting("is_reporting", "False")
-        if is_rep != 'True':
-            break
+        if is_rep != 'True': break
             
         report_text = await get_setting("report_text", "")
         raw_msgs = await get_setting("report_messages", "")
@@ -945,12 +848,10 @@ async def run_reporting_loop(user_id):
                 if await client.is_user_authorized():
                     client.account_name = name or 'حساب بدون اسم'
                     clients.append(client)
-            except Exception as e:
-                logger.error(f"خطأ بتشغيل حساب الشد ({name}): {e}")
+            except Exception: pass
 
         if not clients:
             await set_setting("is_reporting", "False")
-            logger.error("كل حسابات الشد فشل الاتصال بها، تم إيقاف الحملة.")
             break
 
         tasks = []
@@ -962,27 +863,23 @@ async def run_reporting_loop(user_id):
                 match_priv = re.search(r"t\.me/c/(\d+)/(\d+)", link)
                 if match_pub and match_pub.group(1) != 'c':
                     peer = match_pub.group(1)
-                    msg_id = int(match_pub.group(2))
-                    targets_dict.setdefault(peer, []).append(msg_id)
+                    targets_dict.setdefault(peer, []).append(int(match_pub.group(2)))
                 elif match_priv:
                     peer = int("-100" + match_priv.group(1))
-                    msg_id = int(match_priv.group(2))
-                    targets_dict.setdefault(peer, []).append(msg_id)
+                    targets_dict.setdefault(peer, []).append(int(match_priv.group(2)))
 
             for client in clients:
                 for peer, msg_ids in targets_dict.items():
                     try:
                         entity = await client.get_input_entity(peer)
                         tasks.append(report_single_client(client, entity, report_reason, report_text, is_message=True, msg_ids=msg_ids))
-                    except Exception as e:
-                        logger.error(f"خطأ في استخراج الكيان للرسائل: {e}")
+                    except Exception: pass
         elif report_target:
             for client in clients:
                 try:
                     entity = await client.get_input_entity(report_target)
                     tasks.append(report_single_client(client, entity, report_reason, report_text, is_message=False))
-                except Exception as e:
-                    logger.error(f"خطأ في استخراج الكيان للهدف: {e}")
+                except Exception: pass
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -997,30 +894,24 @@ async def run_reporting_loop(user_id):
 
         await asyncio.sleep(random.randint(15, 30))
 
-@bot.on(events.CallbackQuery(pattern=r"^mutate_(on|off)$"))
+@bot.on(events.CallbackQuery(pattern=b"^mutate_(on|off)$"))
 async def toggle_mutate_callback(event):
     if not await is_authorized(event.sender_id): return
-    choice = event.data.decode().split("_")[-1]
+    choice = event.pattern_match.group(1).decode('utf-8')
     await set_setting("mutate_kalisha", "True" if choice == "on" else "False")
     
     status_msg = "🟢 مفعّلة (سيتم حماية الرسائل عبر التعديل الطفيف)" if choice == "on" else "🔴 معطّلة (سيتم إرسال الرسائل متطابقة تماماً)"
-    await event.edit(
-        f"⚙️ **تم تحديث إعدادات الكليشة بنجاح!**\n\n"
-        f"الحماية ضد التكرار المتطابق: {status_msg}",
-        buttons=[[Button.inline("🔙 القائمة الرئيسية", b"back_start")]]
-    )
+    await event.edit(f"⚙️ **تم تحديث إعدادات الكليشة بنجاح!**\n\nالحماية ضد التكرار المتطابق: {status_msg}", buttons=[[Button.inline("🔙 القائمة الرئيسية", b"back_start")]])
 
-@bot.on(events.CallbackQuery(data=b"del_media"))
+@bot.on(events.CallbackQuery(pattern=b"^del_media$"))
 async def del_media_handler(event):
     if not await is_authorized(event.sender_id): return
     old_media = await get_setting("kalisha_media")
     if old_media and os.path.exists(old_media):
         try: os.remove(old_media)
-        except Exception as e:
-            logger.error(f"خطأ في حذف الميديا: {e}")
+        except Exception: pass
     await set_setting("kalisha_media", "")
     await event.answer("✅ تم مسح الصورة/الفيديو بنجاح. سيتم إرسال النص فقط.", alert=True)
-
 
 def generate_pagination_buttons(data_list, current_page, items_per_page, callback_prefix):
     total_pages = (len(data_list) + items_per_page - 1) // items_per_page
@@ -1042,11 +933,11 @@ def generate_pagination_buttons(data_list, current_page, items_per_page, callbac
         
     return buttons
 
-@bot.on(events.CallbackQuery(pattern=r"^page_accounts_(\d+)$"))
+@bot.on(events.CallbackQuery(pattern=b"^page_accounts_(\d+)$"))
 async def paginated_accounts_handler(event):
     if not await is_authorized(event.sender_id): return
     page = int(event.pattern_match.group(1))
-    accounts = await get_all_accounts(event.sender_id, 'sender') # يجب تحويل النتائج إلى قواميس (Dictionaries)
+    accounts = await get_all_accounts(event.sender_id, 'sender') 
     
     formatted_accounts = [{"name": name, "phone": phone} for phone, _, name, _ in accounts]
     buttons = generate_pagination_buttons(formatted_accounts, page, 5, "del_acc")
@@ -1055,24 +946,24 @@ async def paginated_accounts_handler(event):
     await event.edit(f"📂 **قائمة الحسابات (صفحة {page + 1}):**", buttons=buttons)
 
 
-@bot.on(events.CallbackQuery(pattern=r"^del_acc_.*$"))
+@bot.on(events.CallbackQuery(pattern=b"^del_acc_(.*)$"))
 async def delete_account_handler(event):
     if not await is_authorized(event.sender_id): return
-    phone = event.data.decode().replace("del_acc_", "")
+    phone = event.pattern_match.group(1).decode('utf-8')
     buttons = [
         [Button.inline("✅ نعم، متأكد من الحذف", f"confirm_del_{phone}".encode())],
-        [Button.inline("❌ إلغاء والتراجع", b"list_accounts")]
+        [Button.inline("❌ إلغاء والتراجع", b"page_accounts_0")]
     ]
     await event.edit(f"⚠️ **هل أنت متأكد أنك تريد حذف هذا الحساب؟**", buttons=buttons)
 
-@bot.on(events.CallbackQuery(pattern=r"^confirm_del_.*$"))
+@bot.on(events.CallbackQuery(pattern=b"^confirm_del_(.*)$"))
 async def confirm_delete_account_callback(event):
     if not await is_authorized(event.sender_id): return
-    phone = event.data.decode().replace("confirm_del_", "")
+    phone = event.pattern_match.group(1).decode('utf-8')
     await delete_account(phone, event.sender_id)
-    await event.edit(f"✅ تم حذف الحساب بنجاح من قائمتك.", buttons=[[Button.inline("📂 رجوع للقائمة", b"list_accounts")]])
+    await event.edit(f"✅ تم حذف الحساب بنجاح من قائمتك.", buttons=[[Button.inline("📂 رجوع للقائمة", b"page_accounts_0")]])
 
-@bot.on(events.CallbackQuery(data=b"mode_scrape"))
+@bot.on(events.CallbackQuery(pattern=b"^mode_scrape$"))
 async def mode_scrape_handler(event):
     if not await is_authorized(event.sender_id): return
     owner_accounts = await get_all_accounts(OWNER_ID, 'sender')
@@ -1081,6 +972,7 @@ async def mode_scrape_handler(event):
         return
 
     selected_acc = owner_accounts[0]
+    await event.answer()
     await event.delete()
     
     async with bot.conversation(event.chat_id) as conv:
@@ -1092,15 +984,13 @@ async def mode_scrape_handler(event):
                 async for d in client.iter_dialogs():
                     if d.is_user and d.entity:
                         blocked_users.add(d.entity.id)
-            except Exception as e:
-                logger.error(f"خطأ في قراءة المحادثات: {e}")
+            except Exception: pass
             
             await status_msg.edit("🤔 **هل تريد استثناء محادثات حساب آخر مضاف في البوت؟ (نعم/لا)**")
             try: ex_choice = await conv.get_response(timeout=300)
-            except asyncio.TimeoutError:
-                return
+            except asyncio.TimeoutError: return
                 
-            if ex_choice.text.strip() == "نعم":
+            if ex_choice.text and ex_choice.text.strip() == "نعم":
                 accounts = await get_all_accounts(event.sender_id, 'sender')
                 if len(accounts) > 0:
                     msg_acc = "🔢 **اختر الحساب الذي تريد استخدامه للجمع:**\n\n"
@@ -1117,15 +1007,13 @@ async def mode_scrape_handler(event):
                             async for d in ex_client.iter_dialogs():
                                 if d.is_user and d.entity: blocked_users.add(d.entity.id)
                         await conv.send_message("✅ تم دمج محادثات الحساب الإضافي في قائمة التجاهل.")
-                    except Exception as e:
-                        logger.error(f"خطأ جلب محادثات الحساب الإضافي: {e}")
+                    except Exception: pass
 
             await conv.send_message("🎯 **أرسل الآن رابط أو يوزر المجموعة المستهدفة لجمع الأعضاء منها:**")
             try: group_msg = await conv.get_response(timeout=300)
-            except asyncio.TimeoutError:
-                return
+            except asyncio.TimeoutError: return
                 
-            group_input = group_msg.text.strip()
+            group_input = (group_msg.text or "").strip()
 
             try:
                 if "+" in group_input or "joinchat" in group_input:
@@ -1133,8 +1021,7 @@ async def mode_scrape_handler(event):
                     await client(ImportChatInviteRequest(hash_val))
                 else:
                     await client(JoinChannelRequest(group_input))
-            except Exception:
-                pass
+            except Exception: pass
 
             try:
                 target_group = await client.get_entity(group_input)
@@ -1147,8 +1034,7 @@ async def mode_scrape_handler(event):
             try:
                 async for admin in client.iter_participants(target_group, filter=ChannelParticipantsAdmins):
                     admins.add(admin.id)
-            except Exception:
-                pass
+            except Exception: pass
 
             senders = {}
             count = 0
@@ -1165,7 +1051,6 @@ async def mode_scrape_handler(event):
                         if uid not in senders:
                             try:
                                 u_entity = await client.get_entity(uid)
-                                # فلترة الأعضاء المتقدمة: تجاهل الحسابات المحذوفة، البوتات، وغير النشطة لأكثر من 3 أيام
                                 if not getattr(u_entity, 'deleted', False) and not getattr(u_entity, 'bot', False):
                                     status = getattr(u_entity, 'status', None)
                                     if isinstance(status, types.UserStatusOffline):
@@ -1173,17 +1058,14 @@ async def mode_scrape_handler(event):
                                             senders[uid] = u_entity
                                     elif status and not isinstance(status, types.UserStatusEmpty):
                                         senders[uid] = u_entity
-                            except Exception:
-                                pass
+                            except Exception: pass
 
                 if count % 100 == 0 or count == MESSAGES_LIMIT:
                     bar = get_progress_bar(count, MESSAGES_LIMIT)
                     try:
                         await progress_msg.edit(
-                            f"⚡ **جاري فحص رسائل المجموعة المستهدفة**\n\n"
-                            f"{bar} ({int((count/MESSAGES_LIMIT)*100)}%)\n\n"
-                            f"📥 تم فحص: `{count}` / `{MESSAGES_LIMIT}` رسالة\n"
-                            f"👥 تم صيد: `{len(senders)}` عضو متفاعل ونشط"
+                            f"⚡ **جاري فحص رسائل المجموعة المستهدفة**\n\n{bar} ({int((count/MESSAGES_LIMIT)*100)}%)\n\n"
+                            f"📥 تم فحص: `{count}` / `{MESSAGES_LIMIT}` رسالة\n👥 تم صيد: `{len(senders)}` عضو متفاعل ونشط"
                         )
                     except Exception: pass
 
@@ -1196,7 +1078,7 @@ async def mode_scrape_handler(event):
             await consume_trial(event.sender_id)
             await conv.send_message("✨ **انتهت عملية التصفية والأرشفة.**")
 
-@bot.on(events.CallbackQuery(data=b"mode_direct"))
+@bot.on(events.CallbackQuery(pattern=b"^mode_direct$"))
 async def mode_direct_handler(event):
     if not await is_authorized(event.sender_id): return
     accounts = await get_all_accounts(event.sender_id, 'sender')
@@ -1204,6 +1086,7 @@ async def mode_direct_handler(event):
         await event.edit("❌ لا توجد حسابات مضافة خاصة بك للإرسال.", buttons=[[Button.inline("➕ إضافة حساب", b"add_account")]])
         return
 
+    await event.answer()
     await event.delete()
     async with bot.conversation(event.chat_id) as conv:
         msg_acc = "🔢 <b>اختر رقم الحساب الذي سينفذ الإرسال المباشر:</b>\n\n"
@@ -1215,7 +1098,7 @@ async def mode_direct_handler(event):
         try: acc_choice = await conv.get_response(timeout=300)
         except asyncio.TimeoutError: return
             
-        try: sender_acc = accounts[int(acc_choice.text.strip()) - 1]
+        try: sender_acc = accounts[int((acc_choice.text or "").strip()) - 1]
         except (ValueError, IndexError):
             await conv.send_message("❌ اختيار غير صحيح.")
             return
@@ -1224,7 +1107,7 @@ async def mode_direct_handler(event):
         try: users_msg = await conv.get_response(timeout=300)
         except asyncio.TimeoutError: return
         
-        raw_text = users_msg.text
+        raw_text = users_msg.text or ""
         target_ids = set()
         for username in re.findall(r"@([a-zA-Z0-9_]{5,32})", raw_text): target_ids.add(username)
         for uid in re.findall(r"id=(\d+)", raw_text): target_ids.add(int(uid))
@@ -1262,7 +1145,7 @@ async def mode_direct_handler(event):
             await consume_trial(event.sender_id)
             await conv.send_message(f"🏁 **انتهت حملة الإرسال المباشر بنجاح!**\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`")
 
-@bot.on(events.CallbackQuery(data=b"owner_panel"))
+@bot.on(events.CallbackQuery(pattern=b"^owner_panel$"))
 async def owner_panel_handler(event):
     if event.sender_id != OWNER_ID: return
     is_free_mode = (await get_setting("global_free_mode", "False") == "True")
@@ -1276,7 +1159,7 @@ async def owner_panel_handler(event):
     
     await event.edit(f"👑 **لوحة تحكم المالك الأساسي**\n\n🌐 وضع المجاني للكل: `{free_mode_status}`", buttons=buttons)
 
-@bot.on(events.CallbackQuery(data=b"owner_toggle_free"))
+@bot.on(events.CallbackQuery(pattern=b"^owner_toggle_free$"))
 async def owner_toggle_free_handler(event):
     if event.sender_id != OWNER_ID: return
     current_status = (await get_setting("global_free_mode", "False") == "True")
@@ -1286,44 +1169,23 @@ async def owner_toggle_free_handler(event):
     new_status_txt = "مفتوح مجاناً للجميع 🟢" if new_status_str == "True" else "مغلق (بالاشتراك فقط) 🔴"
     await event.edit(f"✅ **تم تغيير حالة البوت بنجاح!**\n\nالوضع الحالي: {new_status_txt}", buttons=[[Button.inline("🔙 رجوع للوحة المالك", b"owner_panel")]])
 
-
-async def save_progress(task_id: str, target: str, last_id: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('''
-            INSERT INTO progress_tracking (task_id, target_entity, last_processed_id, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET last_processed_id=excluded.last_processed_id, updated_at=excluded.updated_at
-        ''', (task_id, target, last_id, datetime.now(timezone.utc).isoformat()))
-        await db.commit()
-
-async def get_progress(task_id: str):
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT last_processed_id FROM progress_tracking WHERE task_id = ?", (task_id,)) as cursor:
-            result = await cursor.fetchone()
-            return result[0] if result else 0
-
-# معالج الأخطاء الشامل
-def handle_telethon_errors(func):
-    async def wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except errors.FloodWaitError as e:
-            logger.warning(f"تم تفعيل حظر Flood. الانتظار لـ {e.seconds} ثانية.")
-            await asyncio.sleep(e.seconds)
-            return await wrapper(*args, **kwargs)
-        except errors.AuthKeyUnregisteredError:
-            logger.error("الجلسة تالفة أو تم تسجيل الخروج منها.")
-            # هنا يمكنك إضافة كود لحذف الجلسة التالفة من قاعدة البيانات
-            return None
-        except Exception as e:
-            logger.error(f"خطأ غير متوقع في {func.__name__}: {e}")
-            return None
-    return wrapper
-
-
-@bot.on(events.CallbackQuery(data=b"back_start"))
+@bot.on(events.CallbackQuery(pattern=b"^back_start$"))
 async def back_start_handler(event):
-    await start_handler(event)
+    if not await is_authorized(event.sender_id): return
+    buttons = [
+        [Button.inline("🔍 خمط الأعضاء (جمع وتصفية)", b"main_scrape_menu")],
+        [Button.inline("🔥 الشد التلقائي (الريبورتات)", b"main_report_menu")],
+        [Button.inline("➕ إضافة حساب مساعد", b"add_account"), Button.inline("📂 إدارة الحسابات", b"page_accounts_0")]
+    ]
+
+    if event.sender_id == OWNER_ID:
+        buttons.append([Button.inline("👑 لوحة تحكم المالك", b"owner_panel")])
+
+    await event.edit(
+        "👋 **أهلاً بك في بوت الترويج التلقائي المطور**\n\n"
+        "▫️ اختر أحد الأوضاع من القائمة أدناه:",
+        buttons=buttons
+    )
 
 def main():
     asyncio.get_event_loop().run_until_complete(init_db())
@@ -1332,4 +1194,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
