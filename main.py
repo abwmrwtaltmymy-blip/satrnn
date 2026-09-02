@@ -1425,7 +1425,7 @@ import sqlite3
 import telebot
 
 # 1. إعداد توكن البوت
-BOT_TOKEN = 'ضع_توكن_البوت_هنا'
+BOT_TOKEN = '8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # 2. إعداد قاعدة البيانات (SQLite)
