@@ -1347,15 +1347,18 @@ async def check_force_sub(user_id):
             pass
     return not_joined
 
+# دالة معالجة أمر البداية واستخراج رمز الدعوة بأمان
 @bot.on(events.NewMessage(pattern=r'^/start(?:\s+(.+))?$'))
 async def start_handler(event):
     user_id = event.sender_id
     user = await event.get_sender()
     username = getattr(user, 'username', user.first_name or "بدون اسم")
+    
     try:
-    ref_id = event.pattern_match.group(1)
-except (AttributeError, IndexError):
-    ref_id = None
+        ref_id = event.pattern_match.group(1)
+    except (AttributeError, IndexError):
+        ref_id = None
+
 
 
     # 1. تسجيل المستخدم والإحالات
