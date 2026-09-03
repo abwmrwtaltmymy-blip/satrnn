@@ -86,7 +86,11 @@ class TelegramAPIExtractor:
         async with self.session.post(f"{self.base_url}/auth/login", data=data) as resp:
             return await resp.text() == "true"
 
-    async def extract_api_keys(self):
+    async def extract_api_keys(self, retries=0):
+        # منع الحلقة المفرغة: المحاولة لمرة واحدة فقط
+        if retries > 1:
+            raise Exception("فشل تيليجرام في إنشاء API. قد يكون حسابك مقيداً أو جديداً جداً.")
+            
         async with self.session.get(f"{self.base_url}/apps") as resp:
             html = await resp.text()
             soup = BeautifulSoup(html, 'html.parser')
@@ -97,20 +101,26 @@ class TelegramAPIExtractor:
                 api_hash_val = soup.find('input', {'name': 'api_hash'}).get('value')
                 return int(api_id_val), api_hash_val
             else:
-                hash_val = soup.find('input', {'name': 'hash'}).get('value')
+                hash_input = soup.find('input', {'name': 'hash'})
+                if not hash_input:
+                    raise Exception("الموقع محظور حالياً أو الجلسة غير صالحة.")
+                    
+                hash_val = hash_input.get('value')
+                import random
                 create_data = {
                     "hash": hash_val,
                     "app_title": "BotManagerApp",
-                    "app_shortname": f"app{self.phone.replace('+', '')}",
+                    "app_shortname": f"app{self.phone.replace('+', '')}{random.randint(100, 999)}",
                     "app_url": "",
                     "app_platform": "android",
                     "app_desc": ""
                 }
                 await self.session.post(f"{self.base_url}/apps/create", data=create_data)
-                return await self.extract_api_keys()
+                return await self.extract_api_keys(retries + 1)
 
     async def close(self):
         await self.session.close()
+
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
