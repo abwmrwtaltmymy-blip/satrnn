@@ -45,13 +45,13 @@ def mark_account_banned(phone_number):
     conn.commit()
     conn.close()
 
-bot_token = os.getenv("BOT_TOKEN", "")
+bot_token = os.getenv("BOT_TOKEN", "8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
-api_id_str = os.getenv("API_ID", "12345678") 
+api_id_str = os.getenv("API_ID", "36781759") 
 api_id = int(api_id_str)
 
-api_hash = os.getenv("API_HASH", "abcdef1234567890") 
+api_hash = os.getenv("API_HASH", "31a2abacece3f047a878d001aa3fbd95") 
 
 bot = TelegramClient("makkster_bot", api_id, api_hash)
 
