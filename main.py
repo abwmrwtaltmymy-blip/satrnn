@@ -1439,52 +1439,106 @@ async def start_handler(event):
 
 
 
-@bot.on(events.NewMessage(incoming=True))
-async def forward_user_messages(event):
-    if event.is_private and event.sender_id != OWNER_ID:
-        if event.text and event.text.startswith('/'):
-            return
-            
-        try:
-            user = await event.get_sender()
-            user_name = clean_account_name(user.first_name if user else "بدون اسم")
-            username = getattr(user, "username", "لا يوجد")
-            
-            forward_msg = (
-                f"📩 **رسالة جديدة من مستخدم:**\n"
-                f"👤 الاسم: {user_name}\n"
-                f"🌐 المعرف: @{username}\n"
-                f"🆔 الأيدي: `{event.sender_id}`\n\n"
-                f"**الرسالة:**\n{event.text or '(رسالة وسائط/غير نصية)'}"
-            )
-            if event.media:
-                await bot.send_file(OWNER_ID, event.media, caption=forward_msg)
-            else:
-                await bot.send_message(OWNER_ID, forward_msg)
-        except Exception as e:
-            logger.error(f"error {e}")
-
-
-@bot.on(events.CallbackQuery(data=b"owner_stats"))
-async def owner_stats_handler(event):
-    if event.sender_id != OWNER_ID: return
+# دالة معالجة أمر البداية واستخراج رمز الدعوة بأمان وتحديث الرسالة
+@bot.on(events.NewMessage(pattern=r'^/start(?:\s+(.+))?$'))
+async def start_handler(event):
+    user_id = event.sender_id
+    user = await event.get_sender()
+    username = getattr(user, 'username', user.first_name or "بدون اسم")
     
+    try:
+        ref_id = event.pattern_match.group(1)
+    except (AttributeError, IndexError):
+        ref_id = None
+
+    # 1. تسجيل المستخدم والإحالات
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
-            users_count = (await cursor.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM accounts WHERE account_type='sender'") as cursor:
-            sender_count = (await cursor.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM accounts WHERE account_type='report'") as cursor:
-            report_count = (await cursor.fetchone())[0]
-            
-    stats_text = (
-        "📊 **إحصائيات البوت الحالية:**\n\n"
-        f"👥 إجمالي المستخدمين: `{users_count}`\n"
-        f"📱 حسابات الترويج (السحب/النشر): `{sender_count}`\n"
-        f"🔥 حسابات الشد التلقائي: `{report_count}`\n"
-        f"🚨 البلاغات المرسلة: `{await get_setting('report_count', '0')}`"
+        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            is_new_user = await cursor.fetchone() is None
+
+        if is_new_user:
+            await db.execute(
+                "INSERT INTO users (user_id, name, username, date) VALUES (?, ?, ?, ?)",
+                (
+                    user_id,
+                    clean_account_name(user.first_name if user else ""),
+                    getattr(user, "username", None) or "بدون معرف",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                )
+            )
+            await db.commit()
+
+            if ref_id and ref_id.isdigit() and int(ref_id) != user_id:
+                ref_id_int = int(ref_id)
+                async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
+                    ref_row = await cursor.fetchone()
+
+                if ref_row:
+                    await db.execute("UPDATE users SET balance = balance + 1 WHERE user_id = ?", (ref_id_int,))
+                    await db.commit()
+
+            if user_id != OWNER_ID:
+                try:
+                    await bot.send_message(
+                        OWNER_ID,
+                        f"🚨 **إشعار: مستخدم جديد قام بتشغيل البوت!**\n\n"
+                        f"👤 الاسم: `{clean_account_name(user.first_name if user else '')}`\n"
+                        f"🆔 الأيدي: `{user_id}`\n"
+                        f"🌐 المعرف: @{getattr(user, 'username', 'لا يوجد')}"
+                    )
+                except Exception: pass
+
+    # 2. التحقق من الاشتراك الإجباري
+    is_joined, sub_buttons = await check_force_subs(user_id)
+    if not is_joined:
+        text_sub = "❌ **عذراً، يجب عليك الاشتراك في قنوات البوت أولاً لاستخدامه:**"
+        if hasattr(event, 'edit') and hasattr(event, 'data'):
+            await event.edit(text_sub, buttons=sub_buttons)
+        else:
+            await event.respond(text_sub, buttons=sub_buttons)
+        return
+
+    # 3. التحقق من الصلاحية
+    if not await is_authorized(user_id):
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+
+        auth_text = (
+            "❌ **عذراً، أنت لا تملك صلاحية استخدام هذا البوت.**\n\n"
+            "💎 **للحصول على الصلاحية لديك خياران:**\n\n"
+            "1️⃣ **الاشتراك المدفوع:**\n"
+            "راسل المطور للااشتراك وتفعيل البوت في حسابك: @sa22cr\n\n"
+            "2️⃣ **التجربة المجانية (نظام الدعوات):**\n"
+            "قم بدعوة **5** من أصدقائك لبدء البوت عبر رابطك الخاص.\n\n"
+            f"🔗 **رابط الدعوة الخاص بك:**\n`{ref_link}`\n\n"
+        )
+        if hasattr(event, 'edit') and hasattr(event, 'data'):
+            await event.edit(auth_text, buttons=None, link_preview=False)
+        else:
+            await event.respond(auth_text, link_preview=False)
+        return
+
+    # 4. إعداد الأزرار والقائمة الرئيسية
+    buttons = [
+        [Button.inline("🔍 خمط الأعضاء (جمع وتصفية)", b"main_scrape_menu")],
+        [Button.inline("🔥 الشد التلقائي (الريبورتات)", b"main_report_menu")],
+        [Button.inline("➕ إضافة حساب مساعد", b"add_account"), Button.inline("📂 إدارة الحسابات", b"page_accounts_0")]
+    ]
+
+    if user_id == OWNER_ID:
+        buttons.append([Button.inline("👑 لوحة تحكم المالك", b"owner_panel")])
+
+    welcome_text = (
+        "👋 **أهلاً بك في بوت الترويج التلقائي المطور**\n\n"
+        "▫️ اختر أحد الأوضاع من القائمة أدناه:"
     )
-    await event.edit(stats_text, buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+
+    # التحقق مما إذا كان الطلب قادماً من زر (مثل زر الرجوع) لتعديل الرسالة بدلاً من إرسال واحدة جديدة
+    if hasattr(event, 'edit') and hasattr(event, 'data'):
+        await event.edit(welcome_text, buttons=buttons)
+    else:
+        await event.respond(welcome_text, buttons=buttons)
+
 
 @bot.on(events.CallbackQuery(data=b"owner_broadcast"))
 async def owner_broadcast_handler(event):
