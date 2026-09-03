@@ -53,7 +53,7 @@ api_id = int(api_id_str)
 
 api_hash = os.getenv("API_HASH", "31a2abacece3f047a878d001aa3fbd95") 
 
-bot = TelegramClient("makkster_bot", api_id, api_hash)
+bot = TelegramClient("makkste_bot", api_id, api_hash)
 
 DB_NAME = "bot_database.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
