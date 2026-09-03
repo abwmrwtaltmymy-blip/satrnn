@@ -1292,17 +1292,39 @@ async def back_start_handler(event):
 def init_sync_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, role TEXT DEFAULT 'user')''')
+    
+    # Create the full schema to prevent future conflicts
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            role TEXT DEFAULT 'user',
+            balance INTEGER DEFAULT 0,
+            is_referred BOOLEAN DEFAULT FALSE,
+            name TEXT,
+            username TEXT,
+            date TEXT
+        )
+    ''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT, invite_link TEXT)''')
     
-    # محاولة إضافة العمود في حال كان الجدول قديماً ولا يحتويه
+    # Patch existing databases that were created with the old incomplete schema
     try:
         cursor.execute("ALTER TABLE forced_subs ADD COLUMN invite_link TEXT")
     except sqlite3.OperationalError:
-        pass # العمود موجود بالفعل ولا يحتاج إضافة
+        pass 
+        
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN balance INTEGER DEFAULT 0")
+        cursor.execute("ALTER TABLE users ADD COLUMN is_referred BOOLEAN DEFAULT FALSE")
+        cursor.execute("ALTER TABLE users ADD COLUMN name TEXT")
+        cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+        cursor.execute("ALTER TABLE users ADD COLUMN date TEXT")
+    except sqlite3.OperationalError:
+        pass # The columns already exist
         
     conn.commit()
     conn.close()
+
 
 
 async def check_force_sub(user_id):
