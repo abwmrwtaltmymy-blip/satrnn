@@ -45,7 +45,7 @@ def mark_account_banned(phone_number):
     conn.commit()
     conn.close()
 
-bot_token = os.getenv("BOT_TOKEN", "8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ")
+bot_token = os.getenv("BOT_TOKEN", "8912932417:AAE-3vrsrmSW52DlmRpyPOHX4hc0MAulXXE")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
 api_id_str = os.getenv("API_ID", "36781759") 
