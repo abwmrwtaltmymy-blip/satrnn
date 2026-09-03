@@ -434,22 +434,6 @@ async def ownership_protection_handler(event):
                             await event.reply("🚨 تحذير: تم رصد محاولة تحويل ملكية مشبوهة ولم يتم التفاعل مع المالك خلال آخر 15 دقيقة! تم إلغاء العملية تلقائياً.")
                             raise events.StopPropagation
 
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    is_subbed, buttons = await check_force_subs(event.sender_id)
-    if not is_subbed:
-        
-        keyboard = [[btn] for btn in buttons]
-        keyboard.append([Button.inline("🔄 تحقق من الاشتراك", b"check_sub_again")])
-        
-        await event.reply("❌ **عذراً، يجب عليك الانضمام إلى قنوات البوت أولاً ثم الضغط على تحقق.**", buttons=keyboard)
-        return
-        
-    await event.reply("✅ أهلاً بك! يمكنك استخدام البوت الآن.")
-
-    user = await event.get_sender()
-    ref_id = event.pattern_match.group(1)
-
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (event.sender_id,)) as cursor:
             is_new_user = await cursor.fetchone() is None
@@ -1392,9 +1376,17 @@ def init_sync_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, role TEXT DEFAULT 'user')''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT, invite_link TEXT)''')
+    
+    # محاولة إضافة العمود في حال كان الجدول قديماً ولا يحتويه
+    try:
+        cursor.execute("ALTER TABLE forced_subs ADD COLUMN invite_link TEXT")
+    except sqlite3.OperationalError:
+        pass # العمود موجود بالفعل ولا يحتاج إضافة
+        
     conn.commit()
     conn.close()
+
 
 async def check_force_sub(user_id):
     if user_id == OWNER_ID:
@@ -1623,3 +1615,4 @@ if __name__ == '__main__':
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
+
