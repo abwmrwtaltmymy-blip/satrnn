@@ -434,8 +434,19 @@ async def ownership_protection_handler(event):
                             await event.reply("🚨 تحذير: تم رصد محاولة تحويل ملكية مشبوهة ولم يتم التفاعل مع المالك خلال آخر 15 دقيقة! تم إلغاء العملية تلقائياً.")
                             raise events.StopPropagation
 
-@bot.on(events.NewMessage(pattern=r"^/start(?: (.*))?$"))
+@bot.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
+    is_subbed, buttons = await check_force_subs(event.sender_id)
+    if not is_subbed:
+        
+        keyboard = [[btn] for btn in buttons]
+        keyboard.append([Button.inline("🔄 تحقق من الاشتراك", b"check_sub_again")])
+        
+        await event.reply("❌ **عذراً، يجب عليك الانضمام إلى قنوات البوت أولاً ثم الضغط على تحقق.**", buttons=keyboard)
+        return
+        
+    await event.reply("✅ أهلاً بك! يمكنك استخدام البوت الآن.")
+
     user = await event.get_sender()
     ref_id = event.pattern_match.group(1)
 
@@ -1323,11 +1334,14 @@ async def owner_panel_handler(event):
     
     buttons = [
         [Button.inline(f"🔓 البوت للجميع ({free_mode_status})", b"owner_toggle_free")],
-        [Button.inline("➕ إضافة حساب للشد", b"owner_add_rep_acc"), Button.inline("📂 حسابات الشد الحالية", b"owner_list_rep_acc")],
+        [Button.inline("➕ إضافة حساب شد", b"owner_add_rep_acc"), Button.inline("📂 حسابات الشد", b"owner_list_rep_acc")],
+        [Button.inline("📢 إذاعة للمستخدمين", b"owner_broadcast"), Button.inline("📊 إحصائيات البوت", b"owner_stats")],
+        [Button.inline("➕ إضافة اشتراك إجباري", b"owner_add_sub"), Button.inline("➖ حذف اشتراك إجباري", b"owner_del_sub")],
         [Button.inline("🔙 رجوع للقائمة الرئيسية", b"back_start")]
     ]
     
-    await event.edit(f"👑 **لوحة تحكم المالك الأساسي**\n\n🌐 وضع المجاني للكل: `{free_mode_status}`", buttons=buttons)
+    await event.edit(f"👑 **لوحة تحكم المالك الأساسي**\n\nاختر الإجراء المطلوب من القائمة أدناه:", buttons=buttons)
+
 
 @bot.on(events.CallbackQuery(data=b"owner_toggle_free"))
 async def owner_toggle_free_handler(event):
@@ -1373,8 +1387,6 @@ def handle_telethon_errors(func):
 @bot.on(events.CallbackQuery(data=b"back_start"))
 async def back_start_handler(event):
     await start_handler(event)
-
-admin_states = {}
 
 def init_sync_db():
     conn = sqlite3.connect(DB_NAME)
@@ -1432,101 +1444,6 @@ async def start_handler(event):
         await event.reply("❌ **عذراً، يجب عليك الاشتراك في قنوات البوت أولاً:**\n\nبعد الاشتراك اضغط /start", buttons=buttons)
         return
 
-    markup = [
-        [Button.text("بدء الاستخراج 🚀"), Button.text("خدمات البوت ⚙️")]
-    ]
-    if user_id == OWNER_ID:
-        markup.append([Button.text("👑 لوحة التحكم")])
-
-    await event.reply("أهلاً بك في البوت! 🌟\nاختر من الأزرار التالية للبدء:", buttons=markup)
-
-@bot.on(events.NewMessage(func=lambda e: e.text in ["خدمات البوت ⚙️", "بدء الاستخراج 🚀"]))
-async def services_handler(event):
-    if await check_force_sub(event.sender_id):
-        await event.reply("يجب الاشتراك في قنوات البوت أولاً! اضغط /start")
-        return
-        
-    await event.reply("مرحباً بك في الخدمة المطلوبة جاري التنفيذ...")
-
-@bot.on(events.NewMessage(func=lambda e: e.text == "👑 لوحة التحكم" and e.sender_id == OWNER_ID))
-async def admin_panel(event):
-    admin_states[event.sender_id] = None 
-    markup = [
-        [Button.text("➕ اضافة قناة/مجموعة"), Button.text("➖ حذف قناة/مجموعة")],
-        [Button.text("📋 القنوات المضافة"), Button.text("رجوع")]
-    ]
-    await event.reply("مرحباً بك في لوحة تحكم المالك:", buttons=markup)
-
-@bot.on(events.NewMessage(func=lambda e: e.text == "رجوع" and e.sender_id == OWNER_ID))
-async def back_to_main(event):
-    admin_states[event.sender_id] = None
-    markup = [
-        [Button.text("بدء الاستخراج 🚀"), Button.text("خدمات البوت ⚙️")],
-        [Button.text("👑 لوحة التحكم")]
-    ]
-    await event.reply("تم الرجوع للقائمة الرئيسية:", buttons=markup)
-
-@bot.on(events.NewMessage(func=lambda e: e.text == "📋 القنوات المضافة" and e.sender_id == OWNER_ID))
-async def list_subs(event):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT chat_id, chat_name FROM forced_subs')
-    rows = cursor.fetchall()
-    conn.close()
-    
-    if not rows:
-        await event.reply("لا توجد أي قنوات مضافة حالياً.")
-        return
-        
-    text = "📋 **قنوات ومجموعات الاشتراك الإجباري:**\n\n"
-    for r in rows:
-        text += f"📌 الاسم: {r[1]}\n🆔 المعرف: `{r[0]}`\n-------------------\n"
-    await event.reply(text)
-
-@bot.on(events.NewMessage(func=lambda e: e.text == "➕ اضافة قناة/مجموعة" and e.sender_id == OWNER_ID))
-async def add_sub_step(event):
-    admin_states[event.sender_id] = "add_sub"
-    await event.reply("أرسل معرف القناة أو المجموعة (مثال: `@ChannelUsername` أو الآيدي) مع اسم لها بهذا الشكل:\n`ID OR Username | Name`")
-
-@bot.on(events.NewMessage(func=lambda e: e.text == "➖ حذف قناة/مجموعة" and e.sender_id == OWNER_ID))
-async def remove_sub_step(event):
-    admin_states[event.sender_id] = "del_sub"
-    await event.reply("أرسل معرف القناة أو المجموعة المراد حذفها فقط (مثال: `@ChannelUsername`):")
-
-@bot.on(events.NewMessage(func=lambda e: e.sender_id == OWNER_ID and admin_states.get(e.sender_id) in ["add_sub", "del_sub"]))
-async def process_admin_steps(event):
-    if event.text in ["👑 لوحة التحكم", "رجوع", "📋 القنوات المضافة", "➕ اضافة قناة/مجموعة", "➖ حذف قناة/مجموعة"]:
-        return
-
-    state = admin_states.get(event.sender_id)
-    
-    if state == "add_sub":
-        try:
-            parts = event.text.split('|')
-            chat_id = parts[0].strip()
-            chat_name = parts[1].strip() if len(parts) > 1 else "قناة/مجموعة"
-            
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
-            cursor.execute('INSERT OR REPLACE INTO forced_subs (chat_id, chat_name) VALUES (?, ?)', (chat_id, chat_name))
-            conn.commit()
-            conn.close()
-            
-            await event.reply(f"✅ تمت الإضافة بنجاح:\n{chat_name} ({chat_id})")
-            admin_states[event.sender_id] = None 
-        except Exception as e:
-            await event.reply(f"❌ حدث خطأ في الصيغة. تأكد من استخدام الرمز `|`\n الخطأ: {e}")
-            
-    elif state == "del_sub":
-        chat_id = event.text.strip()
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM forced_subs WHERE chat_id = ?', (chat_id,))
-        conn.commit()
-        conn.close()
-        
-        await event.reply(f"🗑️ تم حذف المعرف `{chat_id}` من قائمة الاشتراك الإجباري.")
-        admin_states[event.sender_id] = None 
 
 @bot.on(events.NewMessage(incoming=True))
 async def forward_user_messages(event):
@@ -1553,10 +1470,156 @@ async def forward_user_messages(event):
         except Exception as e:
             logger.error(f"error {e}")
 
+
+@bot.on(events.CallbackQuery(data=b"owner_stats"))
+async def owner_stats_handler(event):
+    if event.sender_id != OWNER_ID: return
+    
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+            users_count = (await cursor.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM accounts WHERE account_type='sender'") as cursor:
+            sender_count = (await cursor.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM accounts WHERE account_type='report'") as cursor:
+            report_count = (await cursor.fetchone())[0]
+            
+    stats_text = (
+        "📊 **إحصائيات البوت الحالية:**\n\n"
+        f"👥 إجمالي المستخدمين: `{users_count}`\n"
+        f"📱 حسابات الترويج (السحب/النشر): `{sender_count}`\n"
+        f"🔥 حسابات الشد التلقائي: `{report_count}`\n"
+        f"🚨 البلاغات المرسلة: `{await get_setting('report_count', '0')}`"
+    )
+    await event.edit(stats_text, buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+
+@bot.on(events.CallbackQuery(data=b"owner_broadcast"))
+async def owner_broadcast_handler(event):
+    if event.sender_id != OWNER_ID: return
+    await event.delete()
+    
+    async with bot.conversation(event.chat_id) as conv:
+        await conv.send_message("📢 **أرسل رسالة الإذاعة الآن (نص، صورة، أو فيديو):**\n*لإلغاء العملية أرسل /cancel*")
+        try:
+            msg = await conv.get_response(timeout=300)
+        except asyncio.TimeoutError:
+            return
+            
+        if msg.text and msg.text.strip().startswith('/'):
+            await conv.send_message("❌ تم الإلغاء.", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+            return
+            
+        status = await conv.send_message("⏳ **جاري الإذاعة لجميع المستخدمين...**")
+        
+        async with aiosqlite.connect(DB_NAME) as db:
+            async with db.execute("SELECT user_id FROM users") as cursor:
+                users = await cursor.fetchall()
+                
+        success, failed = 0, 0
+        for (u_id,) in users:
+            try:
+                await bot.send_message(u_id, msg)
+                success += 1
+                await asyncio.sleep(0.1)
+            except Exception:
+                failed += 1
+                
+        await status.edit(f"✅ **تمت الإذاعة بنجاح!**\n\nوصلت إلى: `{success}`\nفشلت (حظروا البوت): `{failed}`", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+
+@bot.on(events.CallbackQuery(pattern=r"^owner_(add|del)_sub$"))
+async def owner_manage_sub_handler(event):
+    if event.sender_id != OWNER_ID: return
+    action = event.pattern_match.group(1).decode('utf-8')
+    await event.delete()
+    
+    async with bot.conversation(event.chat_id) as conv:
+        if action == "add":
+            await conv.send_message("1️⃣ **أرسل أيدي (ID) القناة/المجموعة:**\n*(مثال: `-100123456789` للخاصة، أو `@channel` للعامة)*")
+            try:
+                chat_id = (await conv.get_response(timeout=60)).text.strip()
+                if chat_id.startswith('/'): return
+                
+                await conv.send_message("2️⃣ **أرسل اسم الزر (مثال: اشترك الآن):**")
+                chat_name = (await conv.get_response(timeout=60)).text.strip()
+                
+                await conv.send_message("3️⃣ **أرسل رابط الانضمام (Invite Link):**\n*(سواء كان عاماً أو رابط طلب انضمام خاص)*")
+                invite_link = (await conv.get_response(timeout=60)).text.strip()
+                
+                async with aiosqlite.connect(DB_NAME) as db:
+                    # تحديث الجدول لدعم الروابط في حال لم يكن محدثاً
+                    await db.execute("CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT, invite_link TEXT)")
+                    try: await db.execute("ALTER TABLE forced_subs ADD COLUMN invite_link TEXT")
+                    except: pass
+                    
+                    await db.execute("INSERT OR REPLACE INTO forced_subs (chat_id, chat_name, invite_link) VALUES (?, ?, ?)", (chat_id, chat_name, invite_link))
+                    await db.commit()
+                    
+                await conv.send_message("✅ **تمت إضافة الاشتراك الإجباري بنجاح!**", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+            except asyncio.TimeoutError:
+                pass
+        else:
+            await conv.send_message("➖ **أرسل أيدي (ID) أو معرف القناة لحذفها:**")
+            try:
+                chat_id = (await conv.get_response(timeout=60)).text.strip()
+                async with aiosqlite.connect(DB_NAME) as db:
+                    await db.execute("DELETE FROM forced_subs WHERE chat_id = ?", (chat_id,))
+                    await db.commit()
+                await conv.send_message("🗑️ **تم الحذف بنجاح.**", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+            except asyncio.TimeoutError:
+                pass
+
+from telethon.tl.functions.messages import HideChatJoinRequestRequest
+from telethon.tl.types import UpdateBotChatInviteRequester
+
+@bot.on(events.Raw)
+async def auto_approve_join_request(event):
+    if isinstance(event, UpdateBotChatInviteRequester):
+        try:
+            # الموافقة على طلب الانضمام تلقائياً
+            await bot(HideChatJoinRequestRequest(
+                peer=event.peer,
+                user_id=event.user_id,
+                approved=True
+            ))
+            # إرسال تنبيه للمستخدم بعد القبول
+            await bot.send_message(event.user_id, "✅ **تم قبول طلب انضمامك!**\nيمكنك الآن إرسال /start لاستخدام البوت.")
+        except Exception as e:
+            print(f"Error approving join request: {e}")
+
+from telethon.tl.functions.channels import GetParticipantRequest
+from telethon.errors import UserNotParticipantError
+
+async def check_force_subs(user_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT, invite_link TEXT)")
+        async with db.execute("SELECT chat_id, chat_name, invite_link FROM forced_subs") as cursor:
+            subs = await cursor.fetchall()
+            
+    if not subs:
+        return True, []
+        
+    not_joined = []
+    for chat_id, chat_name, invite_link in subs:
+        try:
+            # تحويل الأيدي إذا كان رقماً للتحقق الصحيح
+            real_chat_id = int(chat_id) if chat_id.lstrip('-').isdigit() else chat_id
+            await bot(GetParticipantRequest(channel=real_chat_id, participant=user_id))
+        except UserNotParticipantError:
+            # إذا لم يكن مشتركاً، أضف الزر الخاص بالقناة
+            not_joined.append(Button.url(chat_name, invite_link or f"https://t.me/{chat_id.replace('@', '')}"))
+        except Exception:
+            # تخطي في حال لم يكن البوت مشرفاً لتجنب إيقاف العمل
+            pass
+            
+    if not_joined:
+        return False, not_joined
+    return True, []
+
+
+
+
 if __name__ == '__main__':
     init_sync_db()
     bot.loop.run_until_complete(init_db())
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
-
