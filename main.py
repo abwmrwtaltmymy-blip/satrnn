@@ -434,89 +434,6 @@ async def ownership_protection_handler(event):
                             await event.reply("🚨 تحذير: تم رصد محاولة تحويل ملكية مشبوهة ولم يتم التفاعل مع المالك خلال آخر 15 دقيقة! تم إلغاء العملية تلقائياً.")
                             raise events.StopPropagation
 
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (event.sender_id,)) as cursor:
-            is_new_user = await cursor.fetchone() is None
-
-        if is_new_user:
-            await db.execute(
-                "INSERT INTO users (user_id, name, username, date) VALUES (?, ?, ?, ?)",
-                (
-                    event.sender_id,
-                    clean_account_name(user.first_name if user else ""),
-                    getattr(user, "username", None) or "بدون معرف",
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                )
-            )
-            await db.commit()
-
-            if ref_id and ref_id.isdigit() and int(ref_id) != event.sender_id:
-                ref_id_int = int(ref_id)
-                async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
-                    ref_row = await cursor.fetchone()
-
-                if ref_row:
-                    await db.execute("UPDATE users SET balance = balance + 1 WHERE user_id = ?", (ref_id_int,))
-                    await db.commit()
-
-                    async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
-                        new_bal = (await cursor.fetchone())[0]
-
-                    if new_bal % 5 == 0:
-                        await db.execute("UPDATE users SET role = 'trial' WHERE user_id = ?", (ref_id_int,))
-                        await db.commit()
-                        try:
-                            await bot.send_message(
-                                ref_id_int,
-                                "🎉 **مبروك!** لقد قام 5 أشخاص بالدخول للبوت عبر رابط الإحالة الخاص بك.\n\n"
-                                "🎁 **تم منحك تجربة مجانية تلقائياً!** يمكنك الآن استخدام البوت لمرة واحدة مجاناً. أرسل /start للبدء."
-                            )
-                        except Exception as e:
-                            logger.error(f"error: {e}")
-
-            if event.sender_id != OWNER_ID:
-                try:
-                    await bot.send_message(
-                        OWNER_ID,
-                        f"🚨 **إشعار: مستخدم جديد قام بتشغيل البوت!**\n\n"
-                        f"👤 الاسم: `{clean_account_name(user.first_name if user else '')}`\n"
-                        f"🆔 الأيدي: `{event.sender_id}`\n"
-                        f"🌐 المعرف: @{getattr(user, 'username', 'لا يوجد')}\n"
-                        f"⏰ الوقت: `{datetime.now().strftime('%Y-%m-%d %I:%M %p')}`"
-                    )
-                except Exception as e:
-                    logger.error(f"error: {e}")
-
-    if not await is_authorized(event.sender_id):
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start={event.sender_id}"
-
-        await event.respond(
-            "❌ **عذراً، أنت لا تملك صلاحية استخدام هذا البوت.**\n\n"
-            "💎 **للحصول على الصلاحية لديك خياران:**\n\n"
-            "1️⃣ **الاشتراك المدفوع:**\n"
-            "راسل المطور للااشتراك وتفعيل البوت في حسابك: @sa22cr\n\n"
-            "2️⃣ **التجربة المجانية (نظام الدعوات):**\n"
-            "قم بدعوة **5** من أصدقائك لبدء البوت عبر رابطك الخاص. ستحصل على تجربة مجانية تلقائياً عند اكتمال العدد!\n\n"
-            f"🔗 **رابط الدعوة الخاص بك:**\n`{ref_link}`\n\n",
-            link_preview=False
-        )
-        return
-
-    buttons = [
-        [Button.inline("🔍 خمط الأعضاء (جمع وتصفية)", b"main_scrape_menu")],
-        [Button.inline("🔥 الشد التلقائي (الريبورتات)", b"main_report_menu")],
-        [Button.inline("➕ إضافة حساب مساعد", b"add_account"), Button.inline("📂 إدارة الحسابات", b"page_accounts_0")]
-    ]
-
-    if event.sender_id == OWNER_ID:
-        buttons.append([Button.inline("👑 لوحة تحكم المالك", b"owner_panel")])
-
-    await event.respond(
-        "👋 **أهلاً بك في بوت الترويج التلقائي المطور**\n\n"
-        "▫️ اختر أحد الأوضاع من القائمة أدناه:",
-        buttons=buttons
-    )
 
 @bot.on(events.CallbackQuery(data=b"main_scrape_menu"))
 async def main_scrape_menu_handler(event):
@@ -1408,33 +1325,89 @@ async def check_force_sub(user_id):
             pass
     return not_joined
 
-@bot.on(events.NewMessage(pattern='(?i)^/start$'))
+@bot.on(events.NewMessage(pattern=r'^/start(?:\s+(.+))?$'))
 async def start_handler(event):
     user_id = event.sender_id
-    sender = await event.get_sender()
-    username = getattr(sender, 'username', sender.first_name or "بدون اسم")
+    user = await event.get_sender()
+    username = getattr(user, 'username', user.first_name or "بدون اسم")
+    ref_id = event.pattern_match.group(1)
 
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-    if not cursor.fetchone():
-        cursor.execute('INSERT INTO users (user_id, role) VALUES (?, ?)', (user_id, 'user'))
-        conn.commit()
-        try:
-            await bot.send_message(OWNER_ID, f"🚨 **مستخدم جديد دخل للبوت!**\n\n👤 الاسم: {username}\n🆔 الآيدي: `{user_id}`")
-        except:
-            pass
-    conn.close()
+    # 1. تسجيل المستخدم والإحالات
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            is_new_user = await cursor.fetchone() is None
 
-    not_joined = await check_force_sub(user_id)
-    if not_joined:
-        buttons = []
-        for ch in not_joined:
-            link = f"https://t.me/{ch.replace('@', '')}"
-            buttons.append([Button.url(f"اشترك في القناة 📢", link)])
-            
-        await event.reply("❌ **عذراً، يجب عليك الاشتراك في قنوات البوت أولاً:**\n\nبعد الاشتراك اضغط /start", buttons=buttons)
+        if is_new_user:
+            await db.execute(
+                "INSERT INTO users (user_id, name, username, date) VALUES (?, ?, ?, ?)",
+                (
+                    user_id,
+                    clean_account_name(user.first_name if user else ""),
+                    getattr(user, "username", None) or "بدون معرف",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                )
+            )
+            await db.commit()
+
+            if ref_id and ref_id.isdigit() and int(ref_id) != user_id:
+                ref_id_int = int(ref_id)
+                async with db.execute("SELECT balance FROM users WHERE user_id = ?", (ref_id_int,)) as cursor:
+                    ref_row = await cursor.fetchone()
+
+                if ref_row:
+                    await db.execute("UPDATE users SET balance = balance + 1 WHERE user_id = ?", (ref_id_int,))
+                    await db.commit()
+
+            if user_id != OWNER_ID:
+                try:
+                    await bot.send_message(
+                        OWNER_ID,
+                        f"🚨 **إشعار: مستخدم جديد قام بتشغيل البوت!**\n\n"
+                        f"👤 الاسم: `{clean_account_name(user.first_name if user else '')}`\n"
+                        f"🆔 الأيدي: `{user_id}`\n"
+                        f"🌐 المعرف: @{getattr(user, 'username', 'لا يوجد')}"
+                    )
+                except Exception: pass
+
+    # 2. التحقق من الاشتراك الإجباري
+    is_joined, sub_buttons = await check_force_subs(user_id)
+    if not is_joined:
+        await event.respond("❌ **عذراً، يجب عليك الاشتراك في قنوات البوت أولاً لاستخدامه:**", buttons=sub_buttons)
         return
+
+    # 3. التحقق من الصلاحية
+    if not await is_authorized(user_id):
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+
+        await event.respond(
+            "❌ **عذراً، أنت لا تملك صلاحية استخدام هذا البوت.**\n\n"
+            "💎 **للحصول على الصلاحية لديك خياران:**\n\n"
+            "1️⃣ **الاشتراك المدفوع:**\n"
+            "راسل المطور للااشتراك وتفعيل البوت في حسابك: @sa22cr\n\n"
+            "2️⃣ **التجربة المجانية (نظام الدعوات):**\n"
+            "قم بدعوة **5** من أصدقائك لبدء البوت عبر رابطك الخاص.\n\n"
+            f"🔗 **رابط الدعوة الخاص بك:**\n`{ref_link}`\n\n",
+            link_preview=False
+        )
+        return
+
+    # 4. إرسال القائمة الرئيسية والأزرار فقط عند إرسال /start
+    buttons = [
+        [Button.inline("🔍 خمط الأعضاء (جمع وتصفية)", b"main_scrape_menu")],
+        [Button.inline("🔥 الشد التلقائي (الريبورتات)", b"main_report_menu")],
+        [Button.inline("➕ إضافة حساب مساعد", b"add_account"), Button.inline("📂 إدارة الحسابات", b"page_accounts_0")]
+    ]
+
+    if user_id == OWNER_ID:
+        buttons.append([Button.inline("👑 لوحة تحكم المالك", b"owner_panel")])
+
+    await event.respond(
+        "👋 **أهلاً بك في بوت الترويج التلقائي المطور**\n\n"
+        "▫️ اختر أحد الأوضاع من القائمة أدناه:",
+        buttons=buttons
+    )
+
 
 
 @bot.on(events.NewMessage(incoming=True))
@@ -1525,27 +1498,37 @@ async def owner_manage_sub_handler(event):
     
     async with bot.conversation(event.chat_id) as conv:
         if action == "add":
-            await conv.send_message("1️⃣ **أرسل أيدي (ID) القناة/المجموعة:**\n*(مثال: `-100123456789` للخاصة، أو `@channel` للعامة)*")
+            await conv.send_message("1️⃣ **أرسل أيدي (ID) أو معرف (@) القناة/المجموعة:**\n*(مثال: `-100123456789` أو `@channel`)*")
             try:
-                chat_id = (await conv.get_response(timeout=60)).text.strip()
-                if chat_id.startswith('/'): return
+                chat_id_input = (await conv.get_response(timeout=60)).text.strip()
+                if chat_id_input.startswith('/'): return
+
+                # التحقق من أن البوت مشرف في القناة
+                try:
+                    chat_entity = int(chat_id_input) if chat_id_input.lstrip('-').isdigit() else chat_id_input
+                    permissions = await bot.get_permissions(chat_entity, 'me')
+                    if not (permissions.is_admin or permissions.is_creator):
+                        await conv.send_message("⚠️ **البوت ليس مشرفاً في هذه القناة!**\nيرجى رفع البوت مشرفاً في القناة وإعطائه صلاحية إضافة الأعضاء/المستخدمين ثم إعادة المحاولة.")
+                        return
+                except Exception as e:
+                    await conv.send_message(f"❌ **تعذر التحقق من القناة!**\nتأكد من معرف/أيدي القناة ومن رفع البوت مشرفاً فيها أولاً.\nالخطأ: `{e}`")
+                    return
                 
                 await conv.send_message("2️⃣ **أرسل اسم الزر (مثال: اشترك الآن):**")
                 chat_name = (await conv.get_response(timeout=60)).text.strip()
                 
-                await conv.send_message("3️⃣ **أرسل رابط الانضمام (Invite Link):**\n*(سواء كان عاماً أو رابط طلب انضمام خاص)*")
+                await conv.send_message("3️⃣ **أرسل رابط الانضمام (Invite Link):**")
                 invite_link = (await conv.get_response(timeout=60)).text.strip()
                 
                 async with aiosqlite.connect(DB_NAME) as db:
-                    # تحديث الجدول لدعم الروابط في حال لم يكن محدثاً
                     await db.execute("CREATE TABLE IF NOT EXISTS forced_subs (chat_id TEXT PRIMARY KEY, chat_name TEXT, invite_link TEXT)")
                     try: await db.execute("ALTER TABLE forced_subs ADD COLUMN invite_link TEXT")
                     except: pass
                     
-                    await db.execute("INSERT OR REPLACE INTO forced_subs (chat_id, chat_name, invite_link) VALUES (?, ?, ?)", (chat_id, chat_name, invite_link))
+                    await db.execute("INSERT OR REPLACE INTO forced_subs (chat_id, chat_name, invite_link) VALUES (?, ?, ?)", (chat_id_input, chat_name, invite_link))
                     await db.commit()
                     
-                await conv.send_message("✅ **تمت إضافة الاشتراك الإجباري بنجاح!**", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
+                await conv.send_message("✅ **تم التحقق من الصلاحيات وإضافة الاشتراك الإجباري بنجاح!**", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
             except asyncio.TimeoutError:
                 pass
         else:
@@ -1558,6 +1541,7 @@ async def owner_manage_sub_handler(event):
                 await conv.send_message("🗑️ **تم الحذف بنجاح.**", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
             except asyncio.TimeoutError:
                 pass
+
 
 from telethon.tl.functions.messages import HideChatJoinRequestRequest
 from telethon.tl.types import UpdateBotChatInviteRequester
