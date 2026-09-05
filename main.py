@@ -1080,11 +1080,12 @@ async def mode_scrape_handler(event):
     selected_acc = owner_accounts[0]
     await event.delete()
     
-    async with bot.conversation(event.chat_id) as conv:
+    async with bot.conversation(event.chat_id, exclusive=False) as conv:
+        status_msg = await conv.send_message("⏳ **جاري قراءة المحادثات السابقة لحساب الفحص لمنع التكرار...**")
+        
         session_path = os.path.join(SESSIONS_DIR, selected_acc[1])
         async with managed_client(session_path, api_id, api_hash) as client:
             blocked_users = set()
-            status_msg = await conv.send_message("⏳ **جاري قراءة المحادثات السابقة لحساب الفحص لمنع التكرار...**")
             try:
                 async for d in client.iter_dialogs():
                     if d.is_user and d.entity:
@@ -1095,6 +1096,7 @@ async def mode_scrape_handler(event):
             await status_msg.edit("🤔 **هل تريد استثناء محادثات حساب آخر مضاف في البوت؟ (نعم/لا)**")
             try: ex_choice = await conv.get_response(timeout=300)
             except asyncio.TimeoutError: return
+
                 
             if ex_choice.text.strip() == "نعم":
                 accounts = await get_all_accounts(event.sender_id, 'sender')
