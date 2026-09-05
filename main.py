@@ -45,7 +45,7 @@ def mark_account_banned(phone_number):
     conn.commit()
     conn.close()
 
-bot_token = os.getenv("BOT_TOKEN", "8912932417:AAE-3vrsrmSW52DlmRpyPOHX4hc0MAulXXE")
+bot_token = os.getenv("BOT_TOKEN", "8912932417:AAEFhUSx6xQ_LappuPA3fGYytOKY0FDdEpQ")
 OWNER_ID = int(os.getenv("OWNER_ID", "7367921416"))
 
 api_id_str = os.getenv("API_ID", "36781759") 
@@ -53,7 +53,7 @@ api_id = int(api_id_str)
 
 api_hash = os.getenv("API_HASH", "31a2abacece3f047a878d001aa3fbd95") 
 
-bot = TelegramClient("makkste_bot", api_id, api_hash)
+bot = TelegramClient("makkster_bot", api_id, api_hash)
 
 DB_NAME = "bot_database.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1123,27 +1123,25 @@ async def mode_scrape_handler(event):
             group_input = group_msg.text.strip()
             
             try:
-                session_path = os.path.join(SESSIONS_DIR, selected_acc[1])
-                app = TelegramClient(session_path, api_id, api_hash)
-                await app.connect()
+                # إرسال الرسالة أولاً لتجنب خطأ التوقف المفاجئ (UnboundLocalError) في حال فشل الانضمام
                 join_msg = await conv.send_message("🔄 جاري محاولة الانضمام للمجموعة بالحساب الأساسي...")
                 
+                # الاعتماد على client الجاهز مسبقاً لتفادي تضارب الجلسات
                 if "+" in group_input or "joinchat" in group_input:
                     hash_val = group_input.split("/")[-1].replace("+", "").replace("joinchat/", "")
-                    await app(ImportChatInviteRequest(hash_val))
+                    await client(ImportChatInviteRequest(hash_val))
                 else:
-                    await app(JoinChannelRequest(group_input))
+                    await client(JoinChannelRequest(group_input))
                     
                 await join_msg.edit("✅ تم الانضمام بنجاح! جاري سحب الأعضاء...")
-                await app.disconnect()
             except Exception as e:
-                await app.disconnect()
                 buttons = [
                     [Button.inline("نعم، جرب الحسابات المساعدة 🔄", data=f"fallback_{group_input}".encode())],
                     [Button.inline("لا، أوقف العملية ❌", data=b"stop_scrape")]
                 ]
                 await join_msg.edit(f"⚠️ **فشل الحساب الأساسي في الانضمام!**\nالسبب: `{e}`\n\nهل تريد تشغيل التبديل الذكي وتجربة باقي الحسابات؟", buttons=buttons)
                 return
+
 
             try:
                 target_group = await client.get_entity(group_input)
@@ -1681,3 +1679,4 @@ if __name__ == '__main__':
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
+
