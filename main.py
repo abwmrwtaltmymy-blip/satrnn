@@ -1,4 +1,4 @@
-import asyncio
+Enterimport asyncio
 import os
 import random
 import time
@@ -1356,7 +1356,8 @@ async def mode_direct_handler(event):
         # حلقة الأزرار للتعامل مع التعديلات المتعددة بدون توقف البوت
         while True:
             try:
-                press = await conv.wait_event(events.CallbackQuery(sender_id=event.sender_id))
+                # تم تصحيح هذا السطر
+                press = await conv.wait_event(events.CallbackQuery())
                 
                 # إيقاف مؤشر التحميل في الزر لكي لا يتجمد
                 await press.answer()
@@ -1378,6 +1379,7 @@ async def mode_direct_handler(event):
                     
             except Exception as e:
                 print(f"Error in button menu: {str(e)}") # طباعة أي خطأ بالشاشة فوراً
+
 
         send_states[event.sender_id] = "running"
         status_msg = await conv.send_message("⏳ **جاري بدء الإرسال...**", buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]])
