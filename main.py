@@ -1087,17 +1087,21 @@ async def mode_scrape_handler(event):
         async with managed_client(session_path, api_id, api_hash) as client:
             blocked_users = set()
             try:
-                async for d in client.iter_dialogs():
+                # جلب آخر 50 محادثة فقط لتسريع العملية ومنع التوقف
+                async for d in client.iter_dialogs(limit=50):
                     if d.is_user and d.entity:
                         blocked_users.add(d.entity.id)
             except Exception as e:
-                logger.error(f"error: {e}")
+                # طباعة الخطأ على الشاشة مباشرة لتسهيل المتابعة
+                print(f"حدث خطأ أثناء قراءة المحادثات: {e}")
+
             
             await status_msg.edit("🤔 **هل تريد استثناء محادثات حساب آخر مضاف في البوت؟ (نعم/لا)**")
-            try: ex_choice = await conv.get_response(timeout=300)
-            except asyncio.TimeoutError: return
+            try: 
+                ex_choice = await conv.get_response(timeout=300)
+            except asyncio.TimeoutError: 
+                return
 
-                
             if ex_choice.text.strip() == "نعم":
                 accounts = await get_all_accounts(event.sender_id, 'sender')
                 if len(accounts) > 0:
@@ -1107,16 +1111,44 @@ async def mode_scrape_handler(event):
                         else: msg_acc += f"**{idx+1}.** {name}\n"
 
                     await conv.send_message(msg_acc)
+                    
+                    # حلقة تكرار لإجبار المستخدم على إدخال رقم صحيح فقط
+                    while True:
+                        try:
+                            ex_num_msg = await conv.get_response(timeout=300)
+                            ex_num_text = ex_num_msg.text.strip()
+                            
+                            # التحقق من أن الإدخال أرقام فقط
+                            if not ex_num_text.isdigit():
+                                await conv.send_message("⚠️ عذراً، يجب إدخال **رقم** الحساب فقط (مثلاً: 1). الرجاء المحاولة مجدداً:")
+                                continue
+                            
+                            # التحقق من أن الرقم ضمن نطاق الحسابات المتاحة
+                            choice_idx = int(ex_num_text)
+                            if choice_idx < 1 or choice_idx > len(accounts):
+                                await conv.send_message(f"⚠️ الرجاء إدخال رقم صحيح بين 1 و {len(accounts)}:")
+                                continue
+                                
+                            # إذا كان الإدخال صحيحاً نحدد الحساب ونخرج من الحلقة
+                            ex_acc = accounts[choice_idx - 1]
+                            break
+                            
+                        except asyncio.TimeoutError:
+                            return
+                            
+                    # إكمال العملية بعد اختيار الحساب بنجاح
                     try:
-                        ex_num = await conv.get_response(timeout=300)
-                        ex_acc = accounts[int(ex_num.text.strip()) - 1]
                         ex_path = os.path.join(SESSIONS_DIR, ex_acc[1])
                         async with managed_client(ex_path, api_id, api_hash) as ex_client:
-                            async for d in ex_client.iter_dialogs():
-                                if d.is_user and d.entity: blocked_users.add(d.entity.id)
+                            # جلب آخر 50 محادثة لتسريع الفحص ومنع التوقف
+                            async for d in ex_client.iter_dialogs(limit=50):
+                                if d.is_user and d.entity: 
+                                    blocked_users.add(d.entity.id)
                         await conv.send_message("✅ تم دمج محادثات الحساب الإضافي في قائمة التجاهل.")
                     except Exception as e:
                         logger.error(f"error: {e}")
+                        print(f"حدث خطأ أثناء فحص الحساب الإضافي: {e}")
+
 
             await conv.send_message("🎯 **أرسل الآن رابط أو يوزر المجموعة المستهدفة لجمع الأعضاء منها:**")
             try: group_msg = await conv.get_response(timeout=300)
@@ -1672,13 +1704,9 @@ async def check_force_subs(user_id):
         return False, not_joined
     return True, []
 
-
-
-
 if __name__ == '__main__':
     init_sync_db()
     bot.loop.run_until_complete(init_db())
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
-
