@@ -17,6 +17,7 @@ from telethon.tl.types import ChannelParticipantsAdmins
 from telethon.errors import UserNotParticipantError
 from dotenv import load_dotenv
 import aiosqlite
+from telethon.errors import UnauthorizedError, AuthKeyUnregisteredError, UserDeactivatedError
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -67,7 +68,7 @@ os.makedirs(MEDIA_DIR, exist_ok=True)
 DEFAULT_KALISHA = "اوكف اوكف.خلحجيلك مميزات كروبي\nاول شي الحروب مو fري واليرتبط ينحظر اليفشر ينحظر بدون واسطات وكروب ترول وشتبوست 🙏🏿😭"
 MESSAGES_LIMIT = 10000
 CHECK_ACCOUNT_ID = OWNER_ID
-
+send_states = {} 
 class TelegramAPIExtractor:
     def __init__(self, phone):
         self.phone = phone
@@ -444,6 +445,7 @@ async def ownership_protection_handler(event):
                             await event.reply("🚨 تحذير: تم رصد محاولة تحويل ملكية مشبوهة ولم يتم التفاعل مع المالك خلال آخر 15 دقيقة! تم إلغاء العملية تلقائياً.")
                             raise events.StopPropagation
 
+        
 
 @bot.on(events.CallbackQuery(data=b"main_scrape_menu"))
 async def main_scrape_menu_handler(event):
@@ -673,9 +675,7 @@ async def add_acc_auto_handler(event):
             await conv.send_message(f"✅ **تم تسجيل دخول الحساب بنجاح!**\n👤 الاسم: {safe_name}\n🆔 الأيدي: `{me.id}`", buttons=[[Button.inline("🔙 رجوع", b"back_start")]])
 
 
-# ==========================================
-# 4. إضافة حسابات الشد الخاصة بالمالك (تحديث للحماية)
-# ==========================================
+
 @bot.on(events.CallbackQuery(data=b"owner_add_rep_acc"))
 async def owner_add_rep_acc_handler(event):
     if event.sender_id != OWNER_ID: return
@@ -712,7 +712,7 @@ async def owner_add_rep_acc_handler(event):
                 await conv.send_message("❌ تم الإلغاء.")
                 return
             
-            # --- حماية المسافات الصارمة لحسابات الشد ---
+            
             if " " not in code_msg.text.strip():
                 await conv.send_message("❌ **مرفوض!** لم تقم بوضع مسافات بين الأرقام (مثل: 0 0 0 0 0). الإجراء إجباري للحماية.", buttons=[[Button.inline("🔙 رجوع", b"owner_panel")]])
                 return
@@ -825,7 +825,7 @@ async def report_add_text_handler(event):
         if msg.text.strip().startswith('/'): return
             
         await set_setting("report_text", msg.text.strip())
-        await conv.send_message("✅ **تم حفظ كليشة البلاغ بسريّة تامة.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
+        await conv.send_message("✅ **تم حفظ كليشة البلاغ.**", buttons=[[Button.inline("🔙 رجوع", b"main_report_menu")]])
 
 @bot.on(events.CallbackQuery(data=b"report_add_msgs"))
 async def report_add_msgs_handler(event):
@@ -1236,6 +1236,27 @@ async def mode_scrape_handler(event):
             await consume_trial(event.sender_id)
             await conv.send_message("✨ **انتهت عملية التصفية والأرشفة.**")
 
+
+import random
+
+def mutate_text(text):
+    # رموز غير مرئية لا تظهر للمستلم (Zero-width characters)
+    invisible_chars = ['\u200b', '\u200c', '\u200d']
+    
+    # اختيار عدد عشوائي من الحروف المخفية لإضافتها
+    num_inserts = random.randint(1, 3)
+    mutated = list(text)
+    
+    for _ in range(num_inserts):
+        random_char = random.choice(invisible_chars)
+        # وضع الرمز المخفي في مكان عشوائي داخل النص
+        if len(mutated) > 1:
+            insert_pos = random.randint(1, len(mutated)-1)
+            mutated.insert(insert_pos, random_char)
+            
+    return "".join(mutated)
+
+
 @bot.on(events.CallbackQuery(pattern=r"^fallback_(.*)"))
 async def process_smart_fallback(event):
     target_group = event.pattern_match.group(1).decode('utf-8')
@@ -1290,7 +1311,7 @@ async def mode_direct_handler(event):
         return
 
     await event.delete()
-    async with bot.conversation(event.chat_id) as conv:
+    async with bot.conversation(event.chat_id, exclusive=False) as conv:
         msg_acc = "🔢 <b>اختر رقم الحساب الذي سينفذ الإرسال المباشر:</b>\n\n"
         for idx, (p, s, name, aid) in enumerate(accounts):
             if aid: msg_acc += f"<b>{idx+1}.</b> <a href='tg://user?id={aid}'>{name}</a>\n"
@@ -1321,32 +1342,97 @@ async def mode_direct_handler(event):
             await conv.send_message("❌ لم يتم التعرف على أي يوزرات صالحة.")
             return
 
-        await conv.send_message(f"🚀 **تم رصد `{len(target_ids)}` هدف.** بدء حملة الإرسال...")
-        
-        session_path = os.path.join(SESSIONS_DIR, sender_acc[1])
-        
-        async with managed_client(session_path, api_id, api_hash) as client:
-            kalisha_data = {
-                "text": await get_setting("kalisha_text", DEFAULT_KALISHA),
-                "media": await get_setting("kalisha_media"),
-                "mutate": (await get_setting("mutate_kalisha", "False") == "True")
-            }
+        target_list = list(target_ids)
+        total_users = len(target_list)
 
-            success_count = 0
-            error_count = 0
+        menu_buttons = [
+            [Button.inline("▶️ بدء الإرسال", b"start_send")],
+            [Button.inline("📝 تغيير الكليشة", b"change_text"), Button.inline("🖼 تغيير الميديا", b"change_media")]
+        ]
+        await conv.send_message(f"🚀 **تم رصد `{total_users}` هدف.**\n⚙️ **إعدادات الإرسال جاهزة**\nاختر الإجراء المناسب:", buttons=menu_buttons)
+
+        press = await conv.wait_event(events.CallbackQuery(sender_id=event.sender_id))
+        
+        if press.data == b"change_text":
+            pass 
+        elif press.data == b"change_media":
+            pass
             
-            for idx, target in enumerate(list(target_ids)):
-                try: entity = await client.get_entity(target)
-                except Exception:
-                    error_count += 1
-                    continue
+        elif press.data == b"start_send":
+            send_states[event.sender_id] = "running"
+            status_msg = await press.edit("⏳ **جاري بدء الإرسال...**", buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]])
+            
+            session_path = os.path.join(SESSIONS_DIR, sender_acc[1])
+            
+            async with managed_client(session_path, api_id, api_hash) as client:
+                kalisha_data = {
+                    "text": await get_setting("kalisha_text", DEFAULT_KALISHA),
+                    "media": await get_setting("kalisha_media"),
+                    "mutate": (await get_setting("mutate_kalisha", "False") == "True")
+                }
 
-                success, status = await send_with_client(client, entity, kalisha_data)
-                if success: success_count += 1
-                else: error_count += 1
+                success_count = 0
+                error_count = 0
+                count = 0
+                
+                for idx, target in enumerate(target_list):
+                    while send_states.get(event.sender_id) == "paused":
+                        await asyncio.sleep(1)
+                        
+                    if send_states.get(event.sender_id) == "stopped":
+                        await conv.send_message("🛑 تم إنهاء عملية الإرسال.")
+                        break
 
-            await consume_trial(event.sender_id)
-            await conv.send_message(f"🏁 **انتهت حملة الإرسال المباشر بنجاح!**\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`")
+                    try:
+                        entity = await client.get_entity(target)
+                        success, status = await send_with_client(client, entity, kalisha_data)
+                        if success: success_count += 1
+                        else: error_count += 1
+                    except Exception as e:
+                        print(e)
+                        error_count += 1
+
+                    count += 1
+                    
+                    if count % 5 == 0 or count == total_users:
+                        await status_msg.edit(
+                            f"📊 **إحصائيات الإرسال:**\n✅ تم الإرسال إلى: {count} من {total_users}\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`",
+                            buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]]
+                        )
+                        
+                    await asyncio.sleep(1)
+
+                if send_states.get(event.sender_id) != "stopped":
+                    await consume_trial(event.sender_id)
+                    await conv.send_message(f"🏁 **انتهت حملة الإرسال المباشر بنجاح!**\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`")
+
+
+@bot.on(events.CallbackQuery(data=b"some_data")) # أو أي حدث آخر
+async def your_function_handler(event):
+    
+    try:
+        session_path = os.path.join(SESSIONS_DIR, selected_acc[1])
+        async with managed_client(session_path, api_id, api_hash) as client:
+            # محاولة فحص الاتصال
+            me = await client.get_me()
+            if not me:
+                raise UnauthorizedError("Session Revoked")
+                
+            # أكمل باقي كودك الطبيعي هنا...
+            print("تم تسجيل الدخول بنجاح") # سيتم الطباعة مباشرة في التيرمنال 
+
+    except (UnauthorizedError, AuthKeyUnregisteredError, UserDeactivatedError):
+        # إذا تم التقاط خطأ يدل على طرد الجلسة
+        await event.respond("⚠️ **تنبيه:** لقد تم طرد الجلسة أو تسجيل الخروج من هذا الحساب.\n🗑️ سيتم حذفه تلقائياً من قاعدة بيانات البوت.")
+        
+        # 1. حذف ملف الجلسة من التخزين
+        if os.path.exists(session_path):
+            os.remove(session_path)
+
+        await delete_account_from_db(selected_acc[0]) 
+        
+        return 
+
 
 @bot.on(events.CallbackQuery(data=b"owner_panel"))
 async def owner_panel_handler(event):
@@ -1704,9 +1790,37 @@ async def check_force_subs(user_id):
         return False, not_joined
     return True, []
 
+
+@bot.on(events.CallbackQuery(data=b"pause_send"))
+async def pause_send_handler(event):
+    send_states[event.sender_id] = "paused"
+    buttons = [
+        [Button.inline("▶️ إكمال الإرسال", b"resume_send")],
+        [Button.inline("🛑 إيقاف نهائي", b"stop_send")]
+    ]
+    await event.edit("⏸ **تم الإيقاف المؤقت للإرسال.**\n\nماذا تريد أن تفعل؟", buttons=buttons)
+
+
+
+@bot.on(events.CallbackQuery(data=b"resume_send"))
+async def resume_send_handler(event):
+    send_states[event.sender_id] = "running"
+    await event.edit("▶️ **تم استئناف الإرسال...**", buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")]])
+
+@bot.on(events.CallbackQuery(data=b"stop_send"))
+async def stop_send_handler(event):
+    send_states[event.sender_id] = "stopped"
+    await event.edit("🛑 **تم إيقاف الإرسال نهائياً.**")
+
+
+
+
+
 if __name__ == '__main__':
     init_sync_db()
     bot.loop.run_until_complete(init_db())
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
+
+    
