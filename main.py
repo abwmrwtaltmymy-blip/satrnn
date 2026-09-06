@@ -1302,6 +1302,8 @@ async def process_smart_fallback(event):
 async def stop_scraping_callback(event):
     await event.edit("🛑 تم إيقاف عملية السحب بناءً على طلبك.")
 
+from telethon.errors import MessageNotModifiedError, UnauthorizedError, AuthKeyUnregisteredError, UserDeactivatedError
+
 @bot.on(events.CallbackQuery(data=b"mode_direct"))
 async def mode_direct_handler(event):
     if not await is_authorized(event.sender_id): return
@@ -1351,20 +1353,45 @@ async def mode_direct_handler(event):
         ]
         await conv.send_message(f"🚀 **تم رصد `{total_users}` هدف.**\n⚙️ **إعدادات الإرسال جاهزة**\nاختر الإجراء المناسب:", buttons=menu_buttons)
 
-        press = await conv.wait_event(events.CallbackQuery(sender_id=event.sender_id))
+        # حلقة الأزرار للتعامل مع التعديلات المتعددة بدون توقف البوت
+        while True:
+            try:
+                press = await conv.wait_event(events.CallbackQuery(sender_id=event.sender_id))
+                
+                # إيقاف مؤشر التحميل في الزر لكي لا يتجمد
+                await press.answer()
+                
+                if press.data == b"change_text":
+                    await conv.send_message("📝 أرسل الكليشة الجديدة الآن:")
+                    new_text = await conv.get_response(timeout=300)
+                    await set_setting("kalisha_text", new_text.text)
+                    await conv.send_message("✅ تم حفظ الكليشة الجديدة. ماذا تريد أن تفعل الآن؟", buttons=menu_buttons)
+                    
+                elif press.data == b"change_media":
+                    await conv.send_message("🖼 أرسل الميديا الجديدة الآن:")
+                    new_media = await conv.get_response(timeout=300)
+                    # await save_media(new_media) 
+                    await conv.send_message("✅ تم حفظ الميديا الجديدة. ماذا تريد أن تفعل الآن؟", buttons=menu_buttons)
+                    
+                elif press.data == b"start_send":
+                    break # الخروج من الحلقة وبدء الإرسال
+                    
+            except Exception as e:
+                print(f"Error in button menu: {str(e)}") # طباعة أي خطأ بالشاشة فوراً
+
+        send_states[event.sender_id] = "running"
+        status_msg = await conv.send_message("⏳ **جاري بدء الإرسال...**", buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]])
         
-        if press.data == b"change_text":
-            pass 
-        elif press.data == b"change_media":
-            pass
-            
-        elif press.data == b"start_send":
-            send_states[event.sender_id] = "running"
-            status_msg = await press.edit("⏳ **جاري بدء الإرسال...**", buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]])
-            
-            session_path = os.path.join(SESSIONS_DIR, sender_acc[1])
-            
+        session_path = os.path.join(SESSIONS_DIR, sender_acc[1])
+        
+        try:
             async with managed_client(session_path, api_id, api_hash) as client:
+                
+                # فحص حالة الجلسة قبل بدء الإرسال
+                me = await client.get_me()
+                if not me:
+                    raise UnauthorizedError("Session Revoked")
+                    
                 kalisha_data = {
                     "text": await get_setting("kalisha_text", DEFAULT_KALISHA),
                     "media": await get_setting("kalisha_media"),
@@ -1389,49 +1416,37 @@ async def mode_direct_handler(event):
                         if success: success_count += 1
                         else: error_count += 1
                     except Exception as e:
-                        print(e)
+                        print(f"Error sending to {target}: {str(e)}") # طباعة الأخطاء مباشرة
                         error_count += 1
 
                     count += 1
                     
                     if count % 5 == 0 or count == total_users:
-                        await status_msg.edit(
-                            f"📊 **إحصائيات الإرسال:**\n✅ تم الإرسال إلى: {count} من {total_users}\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`",
-                            buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]]
-                        )
-                        
-                    await asyncio.sleep(1)
+                        try:
+                            await status_msg.edit(
+                                f"📊 **إحصائيات الإرسال:**\n✅ تم الإرسال إلى: {count} من {total_users}\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`",
+                                buttons=[[Button.inline("⏸ إيقاف مؤقت", b"pause_send")], [Button.inline("🛑 إيقاف نهائي", b"stop_send")]]
+                            )
+                        except MessageNotModifiedError:
+                            pass
+                        except Exception as edit_error:
+                            print(f"Edit status error: {edit_error}")
+                            
+                        await asyncio.sleep(1)
 
                 if send_states.get(event.sender_id) != "stopped":
                     await consume_trial(event.sender_id)
                     await conv.send_message(f"🏁 **انتهت حملة الإرسال المباشر بنجاح!**\n✅ ناجح: `{success_count}` | ❌ أخطاء: `{error_count}`")
 
+        except (UnauthorizedError, AuthKeyUnregisteredError, UserDeactivatedError):
+            await conv.send_message("⚠️ **تنبيه:** لقد تم طرد الجلسة أو تسجيل الخروج من هذا الحساب.\n🗑️ سيتم حذفه تلقائياً من قاعدة بيانات البوت.")
+            
+            if os.path.exists(session_path):
+                os.remove(session_path)
 
-@bot.on(events.CallbackQuery(data=b"some_data")) # أو أي حدث آخر
-async def your_function_handler(event):
-    
-    try:
-        session_path = os.path.join(SESSIONS_DIR, selected_acc[1])
-        async with managed_client(session_path, api_id, api_hash) as client:
-            # محاولة فحص الاتصال
-            me = await client.get_me()
-            if not me:
-                raise UnauthorizedError("Session Revoked")
-                
-            # أكمل باقي كودك الطبيعي هنا...
-            print("تم تسجيل الدخول بنجاح") # سيتم الطباعة مباشرة في التيرمنال 
+            await delete_account_from_db(sender_acc[0]) 
+            return 
 
-    except (UnauthorizedError, AuthKeyUnregisteredError, UserDeactivatedError):
-        # إذا تم التقاط خطأ يدل على طرد الجلسة
-        await event.respond("⚠️ **تنبيه:** لقد تم طرد الجلسة أو تسجيل الخروج من هذا الحساب.\n🗑️ سيتم حذفه تلقائياً من قاعدة بيانات البوت.")
-        
-        # 1. حذف ملف الجلسة من التخزين
-        if os.path.exists(session_path):
-            os.remove(session_path)
-
-        await delete_account_from_db(selected_acc[0]) 
-        
-        return 
 
 
 @bot.on(events.CallbackQuery(data=b"owner_panel"))
@@ -1800,8 +1815,6 @@ async def pause_send_handler(event):
     ]
     await event.edit("⏸ **تم الإيقاف المؤقت للإرسال.**\n\nماذا تريد أن تفعل؟", buttons=buttons)
 
-
-
 @bot.on(events.CallbackQuery(data=b"resume_send"))
 async def resume_send_handler(event):
     send_states[event.sender_id] = "running"
@@ -1822,5 +1835,3 @@ if __name__ == '__main__':
     bot.start(bot_token=bot_token)
     print("البوت يعمل الآن بكفاءة... 🚀")
     bot.run_until_disconnected()
-
-    
