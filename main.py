@@ -140,9 +140,6 @@ async def strip_buttons(game_obj):
         except Exception:
             pass
 
-def lives_text(points):
-    return str(points)
-
 async def send_main_menu(chat_id):
     u = await bot_username()
     text = (
@@ -730,18 +727,18 @@ async def start_round_internal(g):
             "أرواح الفريق الثاني: " + str(g.team2_points) + "\n\n"
             "المزايد: " + bn + "\n"
             "الخصم: " + on + "\n\n"
-            "المزايدة تجري في الخاص الآن، ولدى المزايد 40 ثانية.")
+            "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
     await send_to_group(g, g.chat_id, text, round_level=True)
     kb_withdraw = [[Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
                    [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 40 ثانية.", buttons=kb_withdraw)
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.", buttons=kb_withdraw)
     except Exception:
         pass
     g.bidding_task = asyncio.create_task(bidding_timeout_internal(g, b))
 
 async def bidding_timeout_internal(g, user_id):
-    await asyncio.sleep(40)
+    await asyncio.sleep(20)
     if g.state != "bidding" or g.bidder != user_id:
         return
     g.consecutive_timeouts = getattr(g, "consecutive_timeouts", 0) + 1
@@ -978,18 +975,18 @@ async def start_round_tournament(m):
                 "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
                 "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
-                "المزايدة في الخاص الآن، ولدى المزايد 40 ثانية.")
+                "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
         await send_to_group(m, gid, text, round_level=True)
     kb_withdraw = [[Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
                    [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 40 ثانية.", buttons=kb_withdraw)
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.", buttons=kb_withdraw)
     except Exception:
         pass
     m.bidding_task = asyncio.create_task(bidding_timeout_tournament(m, b))
 
 async def bidding_timeout_tournament(m, user_id):
-    await asyncio.sleep(40)
+    await asyncio.sleep(20)
     if m.state != "bidding" or m.bidder != user_id:
         return
     m.consecutive_timeouts = getattr(m, "consecutive_timeouts", 0) + 1
@@ -1339,11 +1336,11 @@ async def begin_answer_internal(g, bidder):
     kb = [[Button.inline("أنهيت الإجابة", ("finish_int_" + str(g.chat_id)).encode())],
           [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط الزر. الوقت: 20 ثانية.", buttons=kb)
     g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
 
 async def answer_timeout_internal(g, bidder):
-    await asyncio.sleep(30)
+    await asyncio.sleep(20)
     if g.state == "answering" and g.bidder == bidder:
         await evaluate_internal(g, bidder)
 
@@ -1419,11 +1416,11 @@ async def begin_answer_tournament(m, bidder):
     kb = [[Button.inline("أنهيت الإجابة", ("finish_t_" + str(m.match_id)).encode())],
           [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nعند الانتهاء اضغط الزر. الوقت: 20 ثانية.", buttons=kb)
     m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
 
 async def answer_timeout_tournament(m, bidder):
-    await asyncio.sleep(30)
+    await asyncio.sleep(20)
     if m.state == "answering" and m.bidder == bidder:
         await evaluate_tournament(m, bidder)
 
