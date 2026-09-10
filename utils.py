@@ -34,6 +34,19 @@ def _init_gemini():
         return False
 
 def clean_name(name, default_fallback=SAFE_FALLBACK):
+    if name is None:
+        return default_fallback
+    if isinstance(name, bytes):
+        try:
+            name = name.decode("utf-8", errors="ignore")
+        except Exception:
+            return default_fallback
+    if not isinstance(name, str):
+        try:
+            name = str(name)
+        except Exception:
+            return default_fallback
+    name = name.strip()
     if not name:
         return default_fallback
     low = name.lower()
