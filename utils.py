@@ -7,12 +7,12 @@ from questions import BAD_WORDS, SAFE_FALLBACK
 
 try:
     from google import genai
-    from google.genai import types as genai_types
     _genai_available = True
 except Exception:
     _genai_available = False
 
 _gemini_client = None
+_gemini_model_name = None
 
 def safe_str(v, default=""):
     if v is None:
@@ -28,9 +28,6 @@ def safe_str(v, default=""):
         except Exception:
             return default
     return v
-
-_gemini_client = None
-_gemini_model_name = None
 
 def _init_gemini():
     global _gemini_client, _gemini_model_name
@@ -229,10 +226,22 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         return True, "تم قبول " + str(count_int) + " إجابة صحيحة من أصل " + str(expected_count) + ". " + reason
     return False, "عدد الإجابات الصحيحة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
 
+async def ai_generate_answers(question, target_count, difficulty="medium"):
+    question = safe_str(question, "")
+    if not _init_gemini():
+        return _local_generate_answers(question, target_count, difficulty)
+    accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
+    accuracy = accuracy_map.get(difficulty, 0.75)
+    actual_count = max(1, int(round(target_count * (accuracy + random.uniform(-0.15, 0.15)))))
+    prompt = (
+        "أنت لاعب عربي في تحدي ألعاب.\n"
+        "التصنيف: " + question + "\n"
+        "اطلب منك ذكر " + str(actual_count) + " إجابة.\n"
+        "أعد قائمة عربية بالإجابات فقط، كل إجابة في سطر، بدون ترقيم ولا شرح."
     )
     try:
-        response = await _gemini_client.aio.models.generate_content(
-            model="gemini-2.5-flash",
+        response = _gemini_client.models.generate_content(
+            model=_gemini_model_name,
             contents=prompt,
         )
         text = safe_str(response.text, "").strip()
@@ -246,7 +255,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
             return _local_generate_answers(question, target_count, difficulty)
         return cleaned[:actual_count]
     except Exception as e:
-        print("Gemini generate answers failed:", str(e))
+        print("Gemini gen answers failed:", str(e)[:200])
         return _local_generate_answers(question, target_count, difficulty)
 
 def _local_generate_answers(question, target_count, difficulty="medium"):
@@ -301,38 +310,6 @@ def _local_generate_answers(question, target_count, difficulty="medium"):
     random.shuffle(base)
     picked = base[:min(target, len(base))]
     return picked
-
-async def ai_generate_answers(question, target_count, difficulty="medium"):
-    question = safe_str(question, "")
-    if not _init_gemini():
-        return _local_generate_answers(question, target_count, difficulty)
-    accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
-    accuracy = accuracy_map.get(difficulty, 0.75)
-    actual_count = max(1, int(round(target_count * (accuracy + random.uniform(-0.15, 0.15)))))
-    prompt = (
-        "أنت لاعب عربي في تحدي ألعاب.\n"
-        "التصنيف: " + question + "\n"
-        "اطلب منك ذكر " + str(actual_count) + " إجابة.\n"
-        "أعد قائمة عربية بالإجابات فقط، كل إجابة في سطر، بدون ترقيم ولا شرح."
-    )
-    try:
-        response = _gemini_client.models.generate_content(
-            model=_gemini_model_name,
-            contents=prompt,
-        )
-        text = safe_str(response.text, "").strip()
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
-        cleaned = []
-        for l in lines:
-            l = re.sub(r"^[\-\*\d\.\)\s]+", "", l).strip()
-            if l and len(l) < 60:
-                cleaned.append(l)
-        if not cleaned:
-            return _local_generate_answers(question, target_count, difficulty)
-        return cleaned[:actual_count]
-    except Exception as e:
-        print("Gemini gen answers failed:", str(e)[:200])
-        return _local_generate_answers(question, target_count, difficulty)
 
 async def ai_generate_bid(question, difficulty="medium"):
     question = safe_str(question, "")
@@ -407,7 +384,7 @@ def safe_execute(func):
             return await func(event, *args, **kwargs)
         except errors.ChatWriteForbiddenError:
             try:
-                await event.reply("البوت لا يمتلك صلاحية الكتابة في هذه المجموعة.")
+                await event.reply("البوت لا يمتلك صلاحية الكتابة في هذه المجموعة. رقّي البوت كمشرف.")
             except Exception:
                 pass
         except errors.ChatAdminRequiredError:
@@ -423,13 +400,8 @@ def safe_execute(func):
         except errors.MessageNotModifiedError:
             pass
         except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            print("=== ERROR ===")
-            print(tb)
-            print("=============")
             try:
-                await event.reply("حدث خطأ: " + str(e))
+                await event.reply(translate_error(e))
             except Exception:
                 pass
     return wrapper
