@@ -191,7 +191,7 @@ def _local_fallback_check(expected_count, answers_list):
     uniq = _normalize_answers(answers_list)
     count = len(uniq)
     if count >= expected_count:
-        return True, "تم قبول " + str(count) + " إجابة مختلفة من أصل " + str(expected_count) + " مطلوبة."
+        return True, "تم قبول " + str(count) + " إجابة مختلفة."
     return False, "عدد الإجابات المختلفة " + str(count) + " أقل من المطلوب " + str(expected_count) + "."
 
 def _to_bool(v):
@@ -221,52 +221,199 @@ def _parse_gemini_json(text):
     except Exception:
         return None
 
+def _normalize_ar(s):
+    s = safe_str(s, "").strip().lower()
+    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    s = s.replace("ة", "ه")
+    s = s.replace("ى", "ي")
+    s = s.replace("ؤ", "و").replace("ئ", "ي")
+    s = s.replace("ء", "")
+    s = re.sub(r"[\u064B-\u0652]", "", s)
+    s = re.sub(r"\s+", " ", s)
+    s = s.strip()
+    return s
+
+def _levenshtein(a, b):
+    if a == b:
+        return 0
+    if len(a) == 0:
+        return len(b)
+    if len(b) == 0:
+        return len(a)
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            insert = curr[j - 1] + 1
+            delete = prev[j] + 1
+            substitute = prev[j - 1] + (0 if ca == cb else 1)
+            curr.append(min(insert, delete, substitute))
+        prev = curr
+    return prev[-1]
+
+def _allowed_errors(word):
+    n = len(word)
+    if n <= 3:
+        return 0
+    if n <= 5:
+        return 1
+    if n <= 8:
+        return 2
+    return 3
+
+def _fuzzy_match(answer_norm, bank_norm):
+    if not answer_norm or not bank_norm:
+        return False
+    if answer_norm == bank_norm:
+        return True
+    if answer_norm in bank_norm or bank_norm in answer_norm:
+        if abs(len(answer_norm) - len(bank_norm)) <= 2:
+            return True
+    allowed = _allowed_errors(bank_norm)
+    if allowed > 0:
+        if abs(len(answer_norm) - len(bank_norm)) <= allowed:
+            if _levenshtein(answer_norm, bank_norm) <= allowed:
+                return True
+    if " " in bank_norm or " " in answer_norm:
+        a_words = answer_norm.split()
+        b_words = bank_norm.split()
+        if len(a_words) == len(b_words):
+            total_diff = 0
+            for wa, wb in zip(a_words, b_words):
+                allowed_w = _allowed_errors(wb)
+                d = _levenshtein(wa, wb)
+                if d > allowed_w:
+                    total_diff = 999
+                    break
+                total_diff += d
+            if total_diff <= 2:
+                return True
+    return False
+
+def _check_against_bank(question, answers_list):
+    try:
+        from answers_bank import ANSWERS_BANK
+    except Exception:
+        return None, None, False
+    raw = ANSWERS_BANK.get(question)
+    if not raw:
+        return None, None, False
+    bank = [b.strip() for b in raw.split(",") if b.strip()]
+    bank_norm = [_normalize_ar(b) for b in bank]
+    correct_answers = []
+    unknown_answers = []
+    for a in answers_list:
+        n = _normalize_ar(a)
+        if len(n) < 2:
+            continue
+        matched = False
+        for b in bank_norm:
+            if _fuzzy_match(n, b):
+                matched = True
+                break
+        if matched:
+            correct_answers.append(a)
+        else:
+            unknown_answers.append(a)
+    return correct_answers, unknown_answers, True
+
+async def _verify_unknown_with_ai(question, unknown_answers):
+    if not unknown_answers:
+        return {}
+    if not _init_gemini():
+        return {a: False for a in unknown_answers}
+    prompt = (
+        "أنت حكم صارم تتحقق من انتماء الإجابات لتصنيف معين.\n\n"
+        "التصنيف المطلوب: " + str(question) + "\n\n"
+        "الإجابات للفحص:\n"
+        + "\n".join("- " + a for a in unknown_answers) + "\n\n"
+        "لكل إجابة أجب بصيغة سطر واحد:\n"
+        "<الإجابة>|<نعم أو لا>\n\n"
+        "قواعد:\n"
+        "1. نعم فقط إذا الإجابة تنتمي فعليًا للتصنيف.\n"
+        "2. لا لغير ذلك.\n"
+        "3. أي شك = لا.\n"
+        "4. لا تكتب أي شيء آخر غير الأسطر المطلوبة."
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        return {a: False for a in unknown_answers}
+    result = {}
+    for line in text.split("\n"):
+        line = line.strip()
+        if "|" not in line:
+            continue
+        parts = line.split("|", 1)
+        key = _normalize_ar(parts[0])
+        val = parts[1].strip().lower()
+        is_yes = val in ("نعم", "yes", "true", "1", "صح", "صحيح")
+        for a in unknown_answers:
+            if _normalize_ar(a) == key:
+                result[a] = is_yes
+                break
+    for a in unknown_answers:
+        if a not in result:
+            result[a] = False
+    return result
+
 async def evaluate_answers_with_ai(question, expected_count, answers_list):
     if not answers_list:
         return False, "لم يتم إرسال أي إجابة."
     uniq = _normalize_answers(answers_list)
     if not uniq:
         return False, "لم يتم إرسال أي إجابة صالحة."
-    if len(uniq) < expected_count:
-        return False, "عدد الإجابات المختلفة " + str(len(uniq)) + " أقل من المطلوب " + str(expected_count) + "."
+
+    correct_answers, unknown_answers, is_bank_question = _check_against_bank(question, uniq)
+
+    if is_bank_question:
+        ai_verified_correct = 0
+        if unknown_answers:
+            verified = await _verify_unknown_with_ai(question, unknown_answers)
+            ai_verified_correct = sum(1 for v in verified.values() if v)
+        total_correct = len(correct_answers) + ai_verified_correct
+        if total_correct >= expected_count:
+            return True, "تم قبول " + str(total_correct) + " إجابة صحيحة من أصل " + str(expected_count) + " مطلوبة."
+        rejected = [a for a in unknown_answers]
+        extra = ""
+        if rejected:
+            extra = " إجابات مرفوضة: " + ", ".join(rejected[:5])
+        return False, "عدد الإجابات الصحيحة " + str(total_correct) + " أقل من المطلوب " + str(expected_count) + "." + extra
+
+    if not _init_gemini():
+        return False, "تعذر التقييم. حاول مرة أخرى."
 
     prompt = (
         "قيّم إجابات لاعب في تحدي سريع.\n\n"
         "التصنيف: " + str(question) + "\n"
         "العدد المطلوب: " + str(expected_count) + "\n"
-        "عدد الإجابات: " + str(len(uniq)) + "\n"
         "الإجابات:\n"
         + "\n".join("- " + a for a in uniq) + "\n\n"
-        "قواعد:\n"
-        "1. احسب فقط الإجابات المنتمية للتصنيف.\n"
-        "2. المكرر بمعنى واحد إجابة واحدة.\n"
-        "3. إذا عدد الإجابات الصحيحة أقل من " + str(expected_count) + " فالنتيجة فشل.\n"
-        "4. الشك يعتبر خطأ.\n\n"
+        "قواعد صارمة:\n"
+        "1. احسب فقط الإجابات المنتمية فعليًا للتصنيف.\n"
+        "2. أي إجابة من تصنيف آخر تعتبر خاطئة.\n"
+        "3. المكرر بمعنى واحد إجابة واحدة.\n"
+        "4. الشك يعتبر خطأ.\n"
+        "5. إذا عدد الإجابات الصحيحة أقل من " + str(expected_count) + " فالنتيجة فشل.\n\n"
         "أعد JSON فقط:\n"
         "{\"correct\": true أو false, \"count\": رقم, \"reason\": \"سبب مختصر بالعربية\"}"
     )
-
     text = await _gemini_generate(prompt)
     if not text:
-        ok, reason = _local_fallback_check(expected_count, uniq)
-        return ok, "الذكاء الاصطناعي مزدحم حاليًا، تم الاعتماد على الفحص المحلي. " + reason
-
+        return False, "تعذر تقييم الإجابات. حاول مرة أخرى."
     data = _parse_gemini_json(text)
     if data is None:
-        ok, reason = _local_fallback_check(expected_count, uniq)
-        return ok, "تعذر قراءة رد الذكاء الاصطناعي، تم الاعتماد على الفحص المحلي. " + reason
-
+        return False, "تعذر قراءة تقييم الذكاء الاصطناعي."
     correct = _to_bool(data.get("correct"))
     count_raw = data.get("count")
     reason = safe_str(data.get("reason"), "")
     try:
-        count_int = int(count_raw) if count_raw is not None else len(uniq)
+        count_int = int(count_raw) if count_raw is not None else 0
     except Exception:
-        count_int = len(uniq)
-
+        count_int = 0
     if count_int < expected_count:
         correct = False
-
     if correct:
         return True, "تم قبول " + str(count_int) + " إجابة صحيحة من أصل " + str(expected_count) + ". " + reason
     return False, "عدد الإجابات الصحيحة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
@@ -296,49 +443,15 @@ async def ai_generate_answers(question, target_count, difficulty="medium"):
     return cleaned[:actual_count]
 
 def _local_generate_answers(question, target_count, difficulty="medium"):
-    pool = {
-        "ألعاب شوتر": ["pubg", "call of duty", "fortnite", "apex legends", "valorant", "cs go", "battlefield", "overwatch", "rainbow six", "halo"],
-        "عواصم دول عربية": ["القاهرة", "بغداد", "الرياض", "دمشق", "بيروت", "عمان", "الدوحة", "الكويت", "مسقط", "الخرطوم"],
-        "شخصيات أنمي ون بيس": ["لوفي", "زورو", "نامي", "سانجي", "تشوبر", "روبن", "فرانكي", "بروك", "جينبي", "ايس"],
-        "لغات برمجة": ["python", "java", "javascript", "c", "c++", "c#", "php", "ruby", "go", "rust"],
-        "ماركات سيارات عالمية": ["تويوتا", "هوندا", "نيسان", "فورد", "شيفروليه", "مرسيدس", "بي ام دبليو", "اودي", "بورش", "فولكس واجن"],
-        "أندية كرة قدم أوروبية": ["ريال مدريد", "برشلونة", "مانشستر يونايتد", "ليفربول", "بايرن ميونخ", "يوفنتوس", "ميلان", "انتر", "تشيلسي", "ارسنال"],
-        "أفلام خيال علمي": ["ماتريكس", "انسبشن", "انترستيلار", "افاتار", "ستار وورز", "ستار تريك", "بليد رانر", "الين", "ديون", "ذي مارشن"],
-        "دول تبدأ بحرف الميم": ["مصر", "المغرب", "ماليزيا", "مالي", "مالطا", "موريتانيا", "مكسيك", "منغوليا", "مقدونيا", "مدغشقر"],
-        "أعضاء جسم الإنسان": ["قلب", "كبد", "رئة", "كلية", "معدة", "دماغ", "عظم", "جلد", "عين", "اذن"],
-        "فواكه لونها أحمر": ["تفاح", "فراولة", "كرز", "رمان", "بطيخ", "طماطم", "توت", "كريب فروت", "راسبيري", "كرانبيري"],
-        "أسماء سور القرآن": ["الفاتحة", "البقرة", "آل عمران", "النساء", "المائدة", "الأنعام", "الأعراف", "التوبة", "يونس", "هود"],
-        "حيوانات مفترسة": ["اسد", "نمر", "فهد", "ذئب", "دب", "تمساح", "قرش", "نسر", "ضبع", "ثعبان"],
-        "شركات تقنية عالمية": ["ابل", "مايكروسوفت", "جوجل", "امازون", "ميتا", "سامسونج", "سوني", "انفيديا", "انتل", "اي ام دي"],
-        "كواكب المجموعة الشمسية": ["عطارد", "الزهرة", "الأرض", "المريخ", "المشتري", "زحل", "أورانوس", "نبتون", "بلوتو"],
-        "عناصر كيميائية": ["هيدروجين", "أكسجين", "كربون", "نيتروجين", "كالسيوم", "حديد", "صوديوم", "بوتاسيوم", "كلور", "زنك"],
-        "ألعاب عالم مفتوح": ["gta", "minecraft", "witcher", "skyrim", "rdr2", "assassin creed", "far cry", "cyberpunk", "zelda", "elden ring"],
-        "شخصيات مارفل": ["ايرون مان", "كابتن امريكا", "ثور", "هالك", "سبايدر مان", "بلاك ويدو", "هوك اي", "دكتور سترينج", "بلاك بانثر", "انت مان"],
-        "أدوات المطبخ": ["سكين", "ملعقة", "شوكة", "طبق", "كوب", "مقلاة", "قدر", "خلاط", "فرن", "ثلاجة"],
-        "أنواع خطوط عربية": ["نسخ", "ثلث", "رقعة", "ديواني", "كوفي", "فارسي", "اندلسي", "مغربي", "حر", "طغراء"],
-        "أكلات شعبية عراقية": ["دولمة", "كباب", "تشريب", "مسكوف", "قوزي", "برياني", "قبة", "مرقة باميا", "كبة", "تمن"],
-        "دول أفريقية": ["مصر", "نيجيريا", "جنوب افريقيا", "كينيا", "اثيوبيا", "المغرب", "الجزائر", "تونس", "ليبيا", "السودان"],
-        "ألوان أساسية": ["احمر", "ازرق", "اصفر", "اخضر", "ابيض", "اسود", "بنفسجي", "برتقالي", "وردي", "بني"],
-        "ألعاب باتل رويال": ["pubg", "fortnite", "apex", "warzone", "free fire", "fall guys", "rogue company", "spellbreak", "naraka", "vampire"],
-        "رياضات أولمبية": ["جري", "سباحة", "ملاكمة", "مصارعة", "كمال اجسام", "جمباز", "تنس", "كرة سلة", "كرة طائرة", "مبارزة"],
-        "أنهار العالم": ["النيل", "الفرات", "دجلة", "الامازون", "المسيسيبي", "اليانغتسي", "الفولغا", "الدانوب", "الراين", "الغانج"],
-        "محيطات وبحار": ["الهادي", "الاطلسي", "الهندي", "المتجمد الشمالي", "المتجمد الجنوبي", "الاحمر", "الابيض المتوسط", "الاسود", "العرب", "قزوين"],
-        "ماركات هواتف": ["سامسونج", "ابل", "هواوي", "شاومي", "نوكيا", "سوني", "ال جي", "موتورولا", "اوبو", "فيفو"],
-        "أبطال League of Legends": ["ياسو", "زود", "غارين", "تيمو", "لي سين", "ريكتون", "كاتلين", "اهري", "جينكس", "فيغار"],
-        "شخصيات ناروتو": ["ناروتو", "ساسكي", "ساكورا", "كاكاشي", "ايتاتشي", "غارا", "جيرايا", "اوروتشيمارو", "هيناتا", "نيجي"],
-        "أسلحة PUBG": ["m416", "akm", "kar98", "awm", "ump45", "vector", "scar", "s686", "mini14", "dp28"],
-        "زهور وورود": ["وردة", "ياسمين", "زنبقة", "توليب", "اوركيد", "اقحوان", "لافندر", "بنفسج", "شقائق", "عباد الشمس"],
-        "طرق دفع إلكترونية": ["باي بال", "فيزا", "ماستر كارد", "امريكان اكسبريس", "ابل باي", "جوجل باي", "زين كاش", "كي كارد", "بيتكوين", "اتم"],
-        "قنوات يوتيوب شهيرة": ["mrbeast", "pewdiepie", "tseries", "cocomelon", "dude perfect", "kids diana", "like nastya", "markiplier", "jacksepticeye", "dude"],
-        "أجزاء الحاسوب": ["معالج", "رام", "قرص صلب", "شاشة", "لوحة مفاتيح", "فأرة", "كرت شاشة", "مزود طاقة", "مروحة", "صندوق"],
-        "لغات العالم": ["عربية", "انجليزية", "فرنسية", "اسبانية", "المانية", "ايطالية", "روسية", "صينية", "يابانية", "تركية"],
-        "قارات العالم": ["اسيا", "افريقيا", "اوروبا", "امريكا الشمالية", "امريكا الجنوبية", "استراليا", "انتاركتيكا"],
-        "طيور لا تطير": ["نعامة", "بطريق", "ايمو", "كيوي", "دودو", "تاكاهي", "كاسواري", "بوكي", "غواق", "انقرض"],
-        "أبطال تاريخيين": ["صلاح الدين", "خالد بن الوليد", "طارق بن زياد", "نابليون", "الاسكندر", "يوليوس قيصر", "هانيبال", "جنكيز خان", "عمر المختار", "نيلسون مانديلا"],
-        "روايات عالمية": ["البؤساء", "جين اير", "موبي ديك", "الحرب والسلام", "الجريمة والعقاب", "الاخوة كارامازوف", "1984", "مزرعة الحيوان", "الامير الصغير", "دون كيشوت"],
-        "وسائل نقل": ["سيارة", "دراجة", "طائرة", "قطار", "حافلة", "سفينة", "مترو", "شاحنة", "هليكوبتر", "صاروخ"],
-    }
-    base = pool.get(question, [])
+    try:
+        from answers_bank import ANSWERS_BANK
+        raw = ANSWERS_BANK.get(question)
+        if raw:
+            base = [b.strip() for b in raw.split(",") if b.strip()]
+        else:
+            base = []
+    except Exception:
+        base = []
     if not base:
         base = ["جواب" + str(i) for i in range(1, 15)]
     accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
@@ -354,7 +467,7 @@ async def ai_generate_bid(question, difficulty="medium"):
     low, high = ranges.get(difficulty, (5, 9))
     prompt = (
         "أنت لاعب عربي في تحدي ألعاب.\n"
-        "السؤال: اذكر أكبر عدد من " + question + ".\n"
+        "السؤال: " + question + ".\n"
         "أعد رقمًا فقط بين " + str(low) + " و " + str(high) + ". لا تكتب أي نص آخر."
     )
     text = await _gemini_generate(prompt)
