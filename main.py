@@ -41,8 +41,30 @@ async def send_to_group(game_obj, chat_id, text, buttons=None):
         if not hasattr(game_obj, "tracked_messages") or game_obj.tracked_messages is None:
             game_obj.tracked_messages = []
         game_obj.tracked_messages.append((chat_id, msg.id))
-    await asyncio.sleep(0.7)
+    await asyncio.sleep(0.6)
     return msg
+
+async def edit_pinned(game_obj, chat_id, text, buttons=None):
+    if game_obj is None or not hasattr(game_obj, "pin_msg_id") or not game_obj.pin_msg_id:
+        return
+    try:
+        await client.edit_message(chat_id, game_obj.pin_msg_id, text, buttons=buttons)
+    except Exception:
+        pass
+
+async def delete_pinned(game_obj, chat_id):
+    if game_obj is None or not hasattr(game_obj, "pin_msg_id") or not game_obj.pin_msg_id:
+        return
+    pid = game_obj.pin_msg_id
+    try:
+        await client.unpin_message(chat_id, pid)
+    except Exception:
+        pass
+    try:
+        await client.delete_messages(chat_id, pid)
+    except Exception:
+        pass
+    game_obj.pin_msg_id = None
 
 async def delete_tracked(game_obj):
     if game_obj is None or not hasattr(game_obj, "tracked_messages"):
@@ -199,31 +221,12 @@ async def cmd_start(event):
                     name = clean_name(user.first_name)
                     g.players.append(user.id)
                     g.names.append(name)
-                    await event.reply("تم تسجيل انضمامك في مجموعة " + safe_str(g.chat_name, ""))
-                    await send_to_group(g, gid, "انضم " + name + " (" + str(len(g.players)) + "/" + str(g.required_total) + ")")
+                    await event.reply("تم تسجيل انضمامك في مجموعة " + safe_str(g.chat_name, "") + "\nانتظر في الكروب.")
+                    await refresh_join_pinned(g)
                     if len(g.players) >= g.required_total:
                         g.split_teams()
                         g.state = "ready_check"
-                        t1 = []
-                        for u in g.team1:
-                            try:
-                                ent = await client.get_entity(u)
-                                t1.append(clean_name(ent.first_name))
-                            except Exception:
-                                t1.append("لاعب")
-                        t2 = []
-                        for u in g.team2:
-                            try:
-                                ent = await client.get_entity(u)
-                                t2.append(clean_name(ent.first_name))
-                            except Exception:
-                                t2.append("لاعب")
-                        text = ("اكتمل العدد وتم تقسيم الفريقين.\n\n"
-                                "الفريق الأول:\n- " + "\n- ".join(t1) + "\n\n"
-                                "الفريق الثاني:\n- " + "\n- ".join(t2) + "\n\n"
-                                "اضغط زر جاهز للبدء.")
-                        kb = [[Button.inline("جاهز", ("ready_int_" + str(gid)).encode())]]
-                        await send_to_group(g, gid, text, buttons=kb)
+                        await refresh_ready_pinned(g)
                     return
                 else:
                     return await event.reply("لا يوجد تحدٍ مفتوح في هذه المجموعة حاليًا.")
@@ -550,23 +553,45 @@ async def cb_internal_size(event):
         pass
     await start_internal(event.chat_id, title, n)
 
-async def join_timeout_internal(chat_id):
-    await asyncio.sleep(120)
-    g = internal_games.get(chat_id)
-    if not g or g.state != "waiting":
+async def refresh_join_pinned(g):
+    if not g.pin_msg_id:
         return
-    internal_games.pop(chat_id, None)
+    u = await bot_username()
+    join_url = "https://t.me/" + u + "?start=join_" + str(g.chat_id)
+    players_text = "لا أحد بعد" if not g.players else "\n- ".join(g.names)
+    text = ("تحدي داخلي\n\n"
+            "عدد اللاعبين لكل فريق: " + str(g.team_size) + "\n"
+            "المطلوب: " + str(g.required_total) + " لاعب\n\n"
+            "المنضمون (" + str(len(g.players)) + "/" + str(g.required_total) + "):\n- " + players_text + "\n\n"
+            "اضغط زر الانضمام للمشاركة.")
+    kb = [[Button.url("انضمام للتحدي", join_url)]]
+    await edit_pinned(g, g.chat_id, text, buttons=kb)
+
+async def refresh_ready_pinned(g):
+    if not g.pin_msg_id:
+        return
+    ready_names = []
+    waiting_names = []
     for p in g.players:
-        private_sessions.pop(p, None)
-    try:
-        await client.unpin_message(chat_id)
-    except Exception:
-        pass
-    await delete_tracked(g)
-    try:
-        await client.send_message(chat_id, "تم إلغاء التحدي لعدم اكتمال العدد خلال دقيقتين.")
-    except Exception:
-        pass
+        try:
+            pname = clean_name((await client.get_entity(p)).first_name)
+        except Exception:
+            pname = "لاعب"
+        if p in g.ready:
+            ready_names.append(pname)
+        else:
+            waiting_names.append(pname)
+    text = "حالة الجاهزية: " + str(len(g.ready)) + "/" + str(g.required_total) + "\n\n"
+    if ready_names:
+        text += "استعدوا:\n- " + "\n- ".join(ready_names)
+    else:
+        text += "استعدوا: لا أحد بعد"
+    if waiting_names:
+        text += "\n\nبالانتظار:\n- " + "\n- ".join(waiting_names)
+    else:
+        text += "\n\nبالانتظار: لا أحد، الجميع جاهز"
+    kb = [[Button.inline("جاهز", ("ready_int_" + str(g.chat_id)).encode())]]
+    await edit_pinned(g, g.chat_id, text, buttons=kb)
 
 async def start_internal(chat_id, chat_name, team_size):
     if chat_id in internal_games:
@@ -580,11 +605,13 @@ async def start_internal(chat_id, chat_name, team_size):
     text = ("تحدي داخلي جديد\n\n"
             "عدد اللاعبين لكل فريق: " + str(team_size) + "\n"
             "المطلوب: " + str(team_size * 2) + " لاعب\n\n"
-            "للاعبين: اضغط زر الانضمام، سيُفتح الخاص مع البوت لتسجيل انضمامك.\n\n"
-            "بعد اكتمال العدد: السؤال يظهر هنا، والمزايدة والإجابة في الخاص.\n"
-            "المزايد لديه 20 ثانية، والمجيب لديه 30 ثانية.")
+            "المنضمون (0/" + str(team_size * 2) + "):\n- لا أحد بعد\n\n"
+            "اضغط زر الانضمام للمشاركة.")
     try:
         msg = await client.send_message(chat_id, text, buttons=kb)
+        g.pin_msg_id = msg.id
+        if not hasattr(g, "tracked_messages") or g.tracked_messages is None:
+            g.tracked_messages = []
         g.tracked_messages.append((chat_id, msg.id))
         try:
             await client.pin_message(chat_id, msg, notify=False)
@@ -593,6 +620,21 @@ async def start_internal(chat_id, chat_name, team_size):
     except Exception:
         pass
     asyncio.create_task(join_timeout_internal(chat_id))
+
+async def join_timeout_internal(chat_id):
+    await asyncio.sleep(120)
+    g = internal_games.get(chat_id)
+    if not g or g.state != "waiting":
+        return
+    internal_games.pop(chat_id, None)
+    for p in g.players:
+        private_sessions.pop(p, None)
+    await delete_pinned(g, chat_id)
+    await delete_tracked(g)
+    try:
+        await client.send_message(chat_id, "تم إلغاء التحدي لعدم اكتمال العدد خلال دقيقتين.")
+    except Exception:
+        pass
 
 @client.on(events.CallbackQuery(pattern=r"^ready_int_(-?\d+)$"))
 @safe_execute
@@ -608,14 +650,9 @@ async def cb_ready_internal(event):
         return await event.answer("أنت مسجل جاهز مسبقًا.", alert=True)
     g.ready.add(user.id)
     await event.answer("تم تسجيل الجاهزية.")
-    try:
-        pname = clean_name((await client.get_entity(user.id)).first_name)
-    except Exception:
-        pname = "لاعب"
-    await send_to_group(g, chat_id, pname + " جاهز (" + str(len(g.ready)) + "/" + str(g.required_total) + ")")
+    await refresh_ready_pinned(g)
     if len(g.ready) >= g.required_total:
-        await send_to_group(g, chat_id, "الجميع جاهز. بدء الجولة الأولى بعد لحظات.")
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1)
         await start_round_internal(g)
 
 async def start_round_internal(g):
@@ -637,13 +674,21 @@ async def start_round_internal(g):
         on = clean_name((await client.get_entity(o)).first_name)
     except Exception:
         on = "لاعب"
-    text = ("الجولة " + str(g.round) + "\n\n"
-            "السؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\n\n"
-            "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
-            "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
-            "المزايد: " + bn + "\n"
-            "الخصم: " + on + "\n\n"
-            "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
+    await delete_pinned(g, g.chat_id)
+    text = ""
+    if g.round == 1:
+        text += ("كيف تلعب:\n"
+                 "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
+                 "2. الخصم يستلم رسالة في الخاص، يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
+                 "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
+                 "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n")
+    text += ("الجولة " + str(g.round) + "\n\n"
+             "السؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\n\n"
+             "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
+             "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
+             "المزايد: " + bn + "\n"
+             "الخصم: " + on + "\n\n"
+             "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
     await send_to_group(g, g.chat_id, text)
     try:
         await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
@@ -658,14 +703,14 @@ async def bidding_timeout_internal(g, user_id):
     g.team1_points -= 20
     g.team2_points += 10
     await send_to_group(g, g.chat_id, "انتهت مدة المزايدة دون رد.\n\nتم إقصاء المزايد تلقائيًا.\nخصم 20 نقطة من الفريق الأول وإضافة 10 نقاط للفريق الثاني.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points))
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     await advance_round_internal(g)
 
 async def advance_round_internal(g):
     if g.team1_points <= 0 or g.team2_points <= 0:
         return await finish_internal(g)
     g.round += 1
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     await start_round_internal(g)
 
 async def finish_internal(g):
@@ -678,10 +723,11 @@ async def finish_internal(g):
         winner = "الفريق الثاني"
         add_points(g.chat_id, "group", -20, g.chat_name)
         update_win_loss(g.chat_id, "group", False)
+    await delete_pinned(g, g.chat_id)
     await strip_buttons(g)
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.3)
     await delete_tracked(g)
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.3)
     try:
         await client.send_message(g.chat_id, "انتهت المعركة.\n\nالفائز: " + winner + "\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points))
     except Exception:
@@ -703,7 +749,7 @@ async def open_nomination(match):
             await client.pin_message(match.group1_id, msg1, notify=False)
         except Exception:
             pass
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.6)
     except Exception:
         pass
     try:
@@ -747,7 +793,7 @@ async def refresh_nom_msg(m, gid):
     try:
         msg = await client.send_message(gid, "\n".join(lines), buttons=buttons)
         m.tracked_messages.append((gid, msg.id))
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.4)
     except Exception:
         pass
 
@@ -801,7 +847,7 @@ async def cb_close_nom(event):
         try:
             msg = await client.send_message(gid_, txt, buttons=kb)
             m.tracked_messages.append((gid_, msg.id))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.4)
         except Exception:
             pass
 
@@ -821,27 +867,9 @@ async def cb_ready_t(event):
         return await event.answer("أنت مسجل جاهز مسبقًا.", alert=True)
     m.ready.add(user.id)
     await event.answer("تم تسجيل جاهزيتك.")
-    total_team = len(m.team1) + len(m.team2)
-    try:
-        pname = clean_name((await client.get_entity(user.id)).first_name)
-    except Exception:
-        pname = "لاعب"
-    try:
-        msg = await client.send_message(gid, pname + " جاهز (" + str(len(m.ready)) + "/" + str(total_team) + ")")
-        m.tracked_messages.append((gid, msg.id))
-        await asyncio.sleep(0.5)
-    except Exception:
-        pass
     needed = len(m.team1) + len(m.team2)
     if needed > 0 and len(m.ready) >= needed:
-        for gid_ in m.both_groups():
-            try:
-                msg2 = await client.send_message(gid_, "الجميع جاهز. بدء الجولة الأولى بعد لحظات.")
-                m.tracked_messages.append((gid_, msg2.id))
-                await asyncio.sleep(0.5)
-            except Exception:
-                pass
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1)
         await start_round_tournament(m)
 
 async def start_round_tournament(m):
@@ -870,17 +898,23 @@ async def start_round_tournament(m):
             oname = p["name"]
             break
     for gid in m.both_groups():
-        text = ("الجولة " + str(m.round) + "\n\n"
-                "السؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\n\n"
-                "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
-                "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
-                "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
-                "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
-                "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
+        text = ""
+        if m.round == 1:
+            text += ("كيف تلعب:\n"
+                     "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
+                     "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
+                     "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n\n")
+        text += ("الجولة " + str(m.round) + "\n\n"
+                 "السؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\n\n"
+                 "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
+                 "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
+                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
+                 "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
+                 "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
         try:
             msg = await client.send_message(gid, text)
             m.tracked_messages.append((gid, msg.id))
-            await asyncio.sleep(0.7)
+            await asyncio.sleep(0.5)
         except Exception:
             pass
     try:
@@ -913,7 +947,7 @@ async def bidding_timeout_tournament(m, user_id):
         try:
             msg = await client.send_message(gid, text)
             m.tracked_messages.append((gid, msg.id))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.4)
         except Exception:
             pass
     await asyncio.sleep(1)
@@ -923,7 +957,7 @@ async def advance_round_tournament(m):
     if m.team1_points <= 0 or m.team2_points <= 0:
         return await finish_tournament(m)
     m.round += 1
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     await start_round_tournament(m)
 
 async def finish_tournament(m):
@@ -941,9 +975,9 @@ async def finish_tournament(m):
         update_win_loss(m.group2_id, "group", True)
         update_win_loss(m.group1_id, "group", False)
     await strip_buttons(m)
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.3)
     await delete_tracked(m)
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.3)
     for gid in m.both_groups():
         try:
             await client.send_message(gid, "انتهت المعركة الكبرى.\n\nالفائز: " + safe_str(winner, "") + "\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
@@ -1155,7 +1189,7 @@ async def evaluate_internal(g, bidder):
         await client.send_message(bidder, "انتهت جولتك، عد إلى المجموعة للنتائج.")
     except Exception:
         pass
-    await asyncio.sleep(1.5)
+    await asyncio.sleep(1)
     await advance_round_internal(g)
 
 @client.on(events.CallbackQuery(pattern=r"^force_t_(\d+)_(\d+)$"))
@@ -1227,7 +1261,7 @@ async def evaluate_tournament(m, bidder):
         try:
             msg = await client.send_message(gid, text)
             m.tracked_messages.append((gid, msg.id))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.4)
         except Exception:
             pass
     await asyncio.sleep(1)
@@ -1264,8 +1298,9 @@ async def cmd_end(event):
     done = False
     if event.chat_id in internal_games:
         g = internal_games.pop(event.chat_id)
+        await delete_pinned(g, event.chat_id)
         await strip_buttons(g)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
         await delete_tracked(g)
         for p in g.players:
             private_sessions.pop(p, None)
@@ -1273,7 +1308,7 @@ async def cmd_end(event):
     for mid, m in list(tournaments.items()):
         if event.chat_id in m.both_groups():
             await strip_buttons(m)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             await delete_tracked(m)
             for p in m.team1 + m.team2:
                 private_sessions.pop(p["user_id"], None)
