@@ -19,13 +19,13 @@ def _init_gemini():
         _gemini_model = genai.GenerativeModel(
             model_name="gemini-1.5-flash",
             generation_config={
-                "temperature": 0.2,
+                "temperature": 0.1,
                 "top_p": 0.9,
                 "max_output_tokens": 512,
             },
             system_instruction=(
-                "أنت حكم عربي لتحديات الألعاب. تتحقق من صحة الإجابات المقدمة من اللاعبين. "
-                "ترد بالعربية فقط، وبتنسيق صارم كما يُطلب منك."
+                "أنت حكم عربي صارم لتحديات الألعاب. تتحقق من صحة الإجابات. "
+                "ترد بالعربية فقط وبصيغة JSON صارمة كما يُطلب منك."
             ),
         )
         _gemini_ready = True
@@ -77,6 +77,16 @@ def _local_fallback_check(expected_count, answers_list):
         return True, "تم قبول " + str(count) + " إجابة مختلفة من أصل " + str(expected_count) + " مطلوبة."
     return False, "عدد الإجابات المختلفة " + str(count) + " أقل من المطلوب " + str(expected_count) + "."
 
+def _to_bool(v):
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        low = v.strip().lower()
+        return low in ("true", "yes", "نعم", "1", "صح", "صحيح")
+    if isinstance(v, (int, float)):
+        return v != 0
+    return False
+
 def _parse_gemini_json(text):
     if not text:
         return None
@@ -101,28 +111,34 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
     if not uniq:
         return False, "لم يتم إرسال أي إجابة صالحة."
 
+    if len(uniq) < expected_count:
+        return False, "عدد الإجابات المختلفة " + str(len(uniq)) + " أقل من المطلوب " + str(expected_count) + "."
+
     if not _init_gemini():
         return _local_fallback_check(expected_count, uniq)
 
     prompt = (
-        "المهمة: تقييم إجابات لاعب في تحدي سريع.\n"
-        "السؤال: اذكر أكبر عدد من " + question + ".\n"
-        "العدد المطلوب: " + str(expected_count) + ".\n"
-        "الإجابات المقدمة (" + str(len(uniq)) + " إجابة):\n"
+        "قيّم إجابات لاعب في تحدي سريع.\n\n"
+        "التصنيف المطلوب: " + question + "\n"
+        "العدد المطلوب: " + str(expected_count) + "\n"
+        "عدد الإجابات المستلمة: " + str(len(uniq)) + "\n"
+        "الإجابات:\n"
         + "\n".join("- " + a for a in uniq) + "\n\n"
-        "قواعد التقييم:\n"
-        "1. اعتبر الإجابة صحيحة إذا كانت تنتمي فعلاً لتصنيف السؤال.\n"
-        "2. اعتبر الإجابة مكررة إذا كانت نفس المعنى بصياغة مختلفة واحسبها مرة واحدة.\n"
-        "3. اعتبر الإجابة خاطئة إذا كانت لا تنتمي للتصنيف أو غير مفهومة.\n"
-        "4. الشرط للنجاح: عدد الإجابات الصحيحة والمختلفة يساوي أو يتجاوز العدد المطلوب.\n\n"
+        "قواعد صارمة يجب تطبيقها:\n"
+        "1. احسب فقط الإجابات التي تنتمي فعليًا لتصنيف السؤال.\n"
+        "2. اعتبر المكرر بمعنى واحد إجابة واحدة فقط.\n"
+        "3. إذا كان عدد الإجابات الصحيحة والمختلفة أقل من " + str(expected_count) + " فالنتيجة فشل مباشرة.\n"
+        "4. لا تتهاون ولا تخترع إجابات صحيحة غير موجودة في القائمة.\n"
+        "5. إذا الشك موجود في إجابة، اعتبرها خاطئة.\n"
+        "6. لا تقبل الإجابات العامة أو الغامضة.\n\n"
         "أعد النتيجة بصيغة JSON فقط بدون أي نص خارجها:\n"
-        "{\"correct\": true أو false, \"count\": عدد_الإجابات_الصحيحة_والمختلفة, \"reason\": \"سبب قصير بالعربية\"}"
+        "{\"correct\": true أو false, \"count\": رقم_الإجابات_الصحيحة_والمختلفة, \"reason\": \"سبب مختصر جدًا بالعربية\"}"
     )
 
     try:
         resp = await _gemini_model.generate_content_async(prompt)
         text = (resp.text or "").strip()
-    except Exception as e:
+    except Exception:
         ok, reason = _local_fallback_check(expected_count, uniq)
         return ok, "تعذر تحليل الذكاء الاصطناعي، تم الاعتماد على الفحص المحلي. " + reason
 
@@ -131,14 +147,20 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         ok, reason = _local_fallback_check(expected_count, uniq)
         return ok, "تعذر قراءة رد الذكاء الاصطناعي، تم الاعتماد على الفحص المحلي. " + reason
 
-    correct = bool(data.get("correct"))
-    count = data.get("count")
+    correct = _to_bool(data.get("correct"))
+    count_raw = data.get("count")
     reason = data.get("reason") or ""
-    if count is None:
-        count = len(uniq)
+    try:
+        count_int = int(count_raw) if count_raw is not None else len(uniq)
+    except Exception:
+        count_int = len(uniq)
+
+    if count_int < expected_count:
+        correct = False
+
     if correct:
-        return True, "تم قبول " + str(count) + " إجابة صحيحة ومختلفة من أصل " + str(expected_count) + " مطلوبة. " + reason
-    return False, "عدد الإجابات الصحيحة والمختلفة " + str(count) + " أقل من المطلوب " + str(expected_count) + ". " + reason
+        return True, "تم قبول " + str(count_int) + " إجابة صحيحة ومختلفة من أصل " + str(expected_count) + " مطلوبة. " + reason
+    return False, "عدد الإجابات الصحيحة والمختلفة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
 
 def translate_error(err):
     low = str(err).lower()
@@ -167,9 +189,13 @@ def translate_error(err):
     if "timeout" in low:
         return "انتهت مدة الاتصال بالخادم."
     if "api key" in low or "permission denied" in low or "unauthenticated" in low:
-        return "مفتاح الذكاء الاصطناعي غير صالح أو منتهي. راجع إعدادات المفتاح."
+        return "مفتاح الذكاء الاصطناعي غير صالح أو منتهي."
     if "quota" in low or "resource exhausted" in low:
         return "تم استهلاك حصة الذكاء الاصطناعي. انتظر قليلًا ثم أعد المحاولة."
+    if "message to delete" in low or "message delete" in low:
+        return "تعذر حذف بعض الرسائل."
+    if "message not found" in low:
+        return "إحدى الرسائل المطلوب حذفها غير موجودة."
     return "حدث خطأ: " + str(err)
 
 def safe_execute(func):
