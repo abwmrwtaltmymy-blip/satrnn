@@ -20,6 +20,15 @@ async def bot_username():
     me = await client.get_me()
     return me.username or ""
 
+async def is_group_admin(event):
+    if event.sender_id == DEV_ID:
+        return True
+    try:
+        perms = await client.get_permissions(event.chat_id, event.sender_id)
+        return bool(getattr(perms, "is_admin", False))
+    except Exception:
+        return False
+
 async def send_tracked(chat_id, text, game_obj, buttons=None):
     try:
         msg = await client.send_message(chat_id, text, buttons=buttons)
@@ -957,6 +966,8 @@ async def cmd_status(event):
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+    if not await is_group_admin(event):
+        return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     if not await require_subscription(event):
         return
     g = internal_games.get(event.chat_id)
@@ -974,12 +985,8 @@ async def cmd_end(event):
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
-    try:
-        perms = await client.get_permissions(event.chat_id, event.sender_id)
-        if not perms.is_admin and event.sender_id != DEV_ID:
-            return await event.reply("هذا الأمر للمشرفين فقط.")
-    except Exception:
-        return await event.reply("تعذر التحقق من الصلاحيات.")
+    if not await is_group_admin(event):
+        return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     done = False
     if event.chat_id in internal_games:
         g = internal_games.pop(event.chat_id)
@@ -1010,6 +1017,8 @@ async def cmd_top(event):
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+    if not await is_group_admin(event):
+        return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     if not await require_subscription(event):
         return
     gtop = get_top("group")
@@ -1027,6 +1036,8 @@ async def cmd_top(event):
 async def cmd_help(event):
     if event.is_private:
         return
+    if not await is_group_admin(event):
+        return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     await event.reply("الأوامر المتاحة:\n/start_game عدد - بدء تحدي داخلي\n/end_game - إنهاء اللعبة (للمشرف)\n/status - حالة اللعبة\n/top - لوحة المتصدرين\n/help - هذه القائمة")
 
 @client.on(events.NewMessage(pattern=r"^/broadcast_groups (.+)", from_users=DEV_ID))
