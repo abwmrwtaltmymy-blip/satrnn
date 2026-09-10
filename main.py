@@ -8,13 +8,16 @@ from database import (init_db, add_points, get_top, is_banned, ban_group, unban_
                       add_force_sub, remove_force_sub, get_force_subs, get_stats,
                       get_all_groups, get_all_users, register_user, update_win_loss)
 from utils import (safe_execute, clean_name, name_has_bad_word, require_subscription,
-                   evaluate_answers_with_ai, translate_error)
+                   evaluate_answers_with_ai, translate_error,
+                   ai_generate_answers, ai_generate_bid)
 from game_manager import (internal_games, tournaments, private_sessions, matchmaking_pool,
                           InternalGame, Tournament, get_question)
 
 init_db()
 
 client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+
+ai_games = {}
 
 async def bot_username():
     me = await client.get_me()
@@ -80,10 +83,10 @@ async def send_main_menu(chat_id):
     text = (
         "مرحبًا بكم في بوت تحدي الثلاثين ثانية.\n\n"
         "اختر أحد الخيارات التالية:\n"
-        "1) بدء مبارة مع مجموعة أخرى: يفتح باب الترشيح والتصويت في كروبكم.\n"
-        "2) بدء مبارة داخل الكروب: يحدد قائد التحدي عدد اللاعبين لكل فريق.\n"
+        "1) بدء مبارة مع مجموعة أخرى: ترشيح وتصويت ثم مطابقة.\n"
+        "2) بدء مبارة داخل الكروب: عدد اللاعبين لكل فريق ثم انضمام.\n"
         "3) أضف البوت كمشرف: يمنح البوت صلاحية التثبيت والكتابة.\n"
-        "4) شرح الأزرار: يعرض هذا الشرح مرة أخرى."
+        "4) شرح الأزرار: يعرض هذا الشرح."
     )
     kb = [
         [Button.inline("بدء مبارة مع مجموعة أخرى", b"mode_tournament")],
@@ -149,11 +152,11 @@ async def on_group_join(event):
     if (not is_admin) or missing:
         u = await bot_username()
         link = "https://t.me/" + u + "?startgroup=admin"
-        text = ("مرحبًا، لإدارة التحديات بشكل كامل أحتاج صلاحيات المشرف الكاملة في مجموعتك:\n"
+        text = ("مرحبًا، لإدارة التحديات بشكل كامل أحتاج صلاحيات المشرف الكاملة:\n"
                 "1) حذف الرسائل\n2) تثبيت الرسائل\n3) حظر المستخدمين\n4) تغيير معلومات المجموعة\n\n")
         if missing:
             text += "الصلاحيات الناقصة حاليًا: " + ", ".join(missing) + ".\n\n"
-        text += "اضغط الزر أدناه لإعادة إضافتي كمشرف بشكل صحيح. سأغادر المجموعة الآن."
+        text += "اضغط الزر أدناه لإعادة إضافتي بشكل صحيح. سأغادر المجموعة الآن."
         kb = [[Button.url("أعد إضافة البوت كمشرف", link)]]
         target = event.added_by
         if target:
@@ -227,16 +230,15 @@ async def cmd_start(event):
         u = await bot_username()
         text = (
             "أهلًا بك في بوت تحدي الثلاثين ثانية.\n\n"
-            "هذا البوت ينظم تحديات سريعة بين الكروبات والأفراد، مع نظام مزايدة في الخاص، "
-            "وعدّاد ثلاثين ثانية للإجابة، وتقييم الإجابات بالذكاء الاصطناعي، "
-            "ولوحة متصدرين لأفضل الكروبات واللاعبين.\n\n"
-            "خطوات اللعب:\n"
-            "1) أضف البوت إلى مجموعتك بصفة مشرف.\n"
-            "2) يجب أن تحتوي المجموعة على 5 أعضاء حقيقيين على الأقل.\n"
-            "3) اكتب /start_game داخل المجموعة لبدء التحدي.\n\n"
-            "ملاحظة: جميع المزايدات والإجابات تحدث في الخاص."
+            "يمكنك:\n"
+            "1) إضافة البوت إلى مجموعتك لتنظيم تحديات بين الأعضاء.\n"
+            "2) اللعب ضد الذكاء الاصطناعي في الخاص مباشرة.\n\n"
+            "اختر ما تريد:"
         )
-        kb = [[Button.url("أضف البوت إلى مجموعتك", "https://t.me/" + u + "?startgroup=admin")]]
+        kb = [
+            [Button.inline("اللعب ضد الذكاء الاصطناعي", b"ai_menu")],
+            [Button.url("أضف البوت إلى مجموعتك", "https://t.me/" + u + "?startgroup=admin")],
+        ]
         await event.reply(text, buttons=kb)
         return
     if is_banned(event.chat_id):
@@ -267,6 +269,37 @@ async def cmd_start_game(event):
         return await event.reply("عدد اللاعبين لكل فريق يجب أن يكون بين 1 و 10.")
     await start_internal(event.chat_id, event.chat.title, team_size)
 
+@client.on(events.NewMessage(pattern=r"^/ai_play$"))
+@safe_execute
+async def cmd_ai_play(event):
+    if not event.is_private:
+        return await event.reply("هذا الأمر مخصص للخاص فقط.")
+    user = await event.get_sender()
+    register_user(user.id, clean_name(user.first_name))
+    text = ("اللعب ضد الذكاء الاصطناعي\n\n"
+            "اختر مستوى الصعوبة:\n"
+            "سهل: الذكاء الاصطناعي يخطئ كثيرًا.\n"
+            "متوسط: توازن بين الصواب والخطأ.\n"
+            "صعب: الذكاء الاصطناعي دقيق لكن ليس مثاليًا.")
+    kb = [
+        [Button.inline("سهل", b"ai_diff_easy")],
+        [Button.inline("متوسط", b"ai_diff_medium")],
+        [Button.inline("صعب", b"ai_diff_hard")],
+    ]
+    await event.reply(text, buttons=kb)
+
+@client.on(events.NewMessage(pattern=r"^/ai_stop$"))
+@safe_execute
+async def cmd_ai_stop(event):
+    if not event.is_private:
+        return
+    user_id = event.sender_id
+    g = ai_games.pop(user_id, None)
+    if g:
+        await event.reply("تم إيقاف اللعبة.\n\nنقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+    else:
+        await event.reply("لا توجد لعبة جارية.")
+
 @client.on(events.CallbackQuery(data=b"explain_buttons"))
 @safe_execute
 async def cb_explain(event):
@@ -278,6 +311,178 @@ async def cb_explain(event):
         "بدء مبارة داخل الكروب: عدد اللاعبين لكل فريق، ثم زر انضمام للأعضاء."
     )
     await event.reply(text)
+
+@client.on(events.CallbackQuery(data=b"ai_menu"))
+@safe_execute
+async def cb_ai_menu(event):
+    await event.answer()
+    text = ("اللعب ضد الذكاء الاصطناعي\n\n"
+            "اختر مستوى الصعوبة:\n"
+            "سهل: الذكاء الاصطناعي يخطئ كثيرًا.\n"
+            "متوسط: توازن بين الصواب والخطأ.\n"
+            "صعب: الذكاء الاصطناعي دقيق لكن ليس مثاليًا.")
+    kb = [
+        [Button.inline("سهل", b"ai_diff_easy")],
+        [Button.inline("متوسط", b"ai_diff_medium")],
+        [Button.inline("صعب", b"ai_diff_hard")],
+    ]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(pattern=r"^ai_diff_(easy|medium|hard)$"))
+@safe_execute
+async def cb_ai_difficulty(event):
+    difficulty = event.pattern_match.group(1)
+    user_id = event.sender_id
+    await event.answer("بدء اللعبة")
+    ai_games[user_id] = {
+        "difficulty": difficulty,
+        "player_points": 100,
+        "ai_points": 100,
+        "round": 1,
+        "state": "idle",
+        "question": None,
+        "player_answers": [],
+        "expected_count": 0,
+    }
+    label = {"easy": "سهل", "medium": "متوسط", "hard": "صعب"}.get(difficulty, difficulty)
+    text = ("بدأت اللعبة ضد الذكاء الاصطناعي\n\n"
+            "مستوى الصعوبة: " + label + "\n"
+            "نقاطك: 100\n"
+            "نقاط الذكاء الاصطناعي: 100")
+    kb = [[Button.inline("ابدأ الجولة الأولى", b"ai_start_round")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"ai_start_round"))
+@safe_execute
+async def cb_ai_start_round(event):
+    await event.answer()
+    user_id = event.sender_id
+    g = ai_games.get(user_id)
+    if not g:
+        return await event.reply("لا توجد لعبة. أرسل /ai_play لبدء لعبة جديدة.")
+    question = get_question()
+    g["question"] = question
+    g["state"] = "player_bid"
+    text = ("الجولة " + str(g["round"]) + "\n\n"
+            "السؤال: اذكر أكبر عدد من " + question + "\n\n"
+            "نقاطك: " + str(g["player_points"]) + "\n"
+            "نقاط الذكاء الاصطناعي: " + str(g["ai_points"]) + "\n\n"
+            "أرسل رقمًا يمثل ما تستطيع ذكره من هذا التصنيف.")
+    try:
+        await event.edit(text)
+    except Exception:
+        await event.reply(text)
+
+@client.on(events.CallbackQuery(data=b"ai_finish_player"))
+@safe_execute
+async def cb_ai_finish_player(event):
+    await event.answer("جاري التقييم")
+    user_id = event.sender_id
+    g = ai_games.get(user_id)
+    if not g or g["state"] != "player_answering":
+        return await event.reply("لا توجد إجابات قيد الانتظار.")
+    await event.reply("جاري تقييم إجاباتك...")
+    ok, reason = await evaluate_answers_with_ai(g["question"], g["expected_count"], g["player_answers"])
+    if ok:
+        g["player_points"] += 10
+        result = "نجاح دورك.\n" + reason
+    else:
+        g["player_points"] -= 20
+        g["ai_points"] += 10
+        result = "فشل دورك.\n" + reason
+    await event.reply(result)
+    await asyncio.sleep(1)
+    await event.reply("نقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+    if g["player_points"] <= 0 or g["ai_points"] <= 0:
+        return await finish_ai_game(user_id)
+    g["state"] = "ai_turn"
+    g["round"] += 1
+    asyncio.create_task(run_ai_turn(user_id))
+
+@client.on(events.CallbackQuery(data=b"ai_next_round"))
+@safe_execute
+async def cb_ai_next_round(event):
+    await event.answer()
+    user_id = event.sender_id
+    g = ai_games.get(user_id)
+    if not g:
+        return await event.reply("لا توجد لعبة.")
+    question = get_question()
+    g["question"] = question
+    g["state"] = "player_bid"
+    text = ("الجولة " + str(g["round"]) + "\n\n"
+            "السؤال: اذكر أكبر عدد من " + question + "\n\n"
+            "نقاطك: " + str(g["player_points"]) + "\n"
+            "نقاط الذكاء الاصطناعي: " + str(g["ai_points"]) + "\n\n"
+            "أرسل رقمًا يمثل ما تستطيع ذكره.")
+    try:
+        await event.edit(text)
+    except Exception:
+        await event.reply(text)
+
+async def run_ai_turn(user_id):
+    g = ai_games.get(user_id)
+    if not g:
+        return
+    await asyncio.sleep(2)
+    try:
+        await client.send_message(user_id, "دور الذكاء الاصطناعي الآن. انتظر...")
+    except Exception:
+        pass
+    await asyncio.sleep(2)
+    ai_question = get_question()
+    g["ai_question"] = ai_question
+    ai_bid = await ai_generate_bid(ai_question, g["difficulty"])
+    try:
+        await client.send_message(user_id, "الذكاء الاصطناعي اختار: " + ai_question + "\nوتحدى نفسه بـ " + str(ai_bid) + " إجابة.")
+    except Exception:
+        pass
+    await asyncio.sleep(2)
+    answers = await ai_generate_answers(ai_question, ai_bid, g["difficulty"])
+    await asyncio.sleep(2)
+    ok, reason = await evaluate_answers_with_ai(ai_question, ai_bid, answers)
+    if ok:
+        g["ai_points"] += 10
+        result = "نجح الذكاء الاصطناعي في دوره.\n" + reason
+    else:
+        g["ai_points"] -= 20
+        g["player_points"] += 10
+        result = "فشل الذكاء الاصطناعي في دوره.\n" + reason
+    try:
+        await client.send_message(user_id, result)
+        await asyncio.sleep(1)
+        await client.send_message(user_id, "نقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+    except Exception:
+        pass
+    if g["player_points"] <= 0 or g["ai_points"] <= 0:
+        return await finish_ai_game(user_id)
+    g["state"] = "idle"
+    kb = [[Button.inline("الجولة التالية", b"ai_next_round")]]
+    try:
+        await client.send_message(user_id, "اضغط للجولة التالية.", buttons=kb)
+    except Exception:
+        pass
+
+async def finish_ai_game(user_id):
+    g = ai_games.pop(user_id, None)
+    if not g:
+        return
+    if g["player_points"] > g["ai_points"]:
+        result = "فزت على الذكاء الاصطناعي."
+    else:
+        result = "خسرت ضد الذكاء الاصطناعي."
+    try:
+        await client.send_message(user_id, "انتهت اللعبة.\n\n" + result + "\n\nنقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+        kb = [[Button.inline("العب مرة أخرى", b"ai_menu")]]
+        await client.send_message(user_id, "تريد جولة جديدة؟", buttons=kb)
+    except Exception:
+        pass
 
 async def try_match_group(chat_id, gname):
     for t in tournaments.values():
@@ -754,6 +959,32 @@ async def private_handler(event):
         register_user(uid, clean_name(user.first_name))
     except Exception:
         pass
+
+    if uid in ai_games:
+        ag = ai_games[uid]
+        txt = (event.text or "").strip()
+        if txt.startswith("/"):
+            return
+        if ag["state"] == "player_bid":
+            if not txt.isdigit():
+                return await event.reply("أرسل رقمًا فقط.")
+            bid = int(txt)
+            if bid < 1 or bid > 50:
+                return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
+            ag["expected_count"] = bid
+            ag["player_answers"] = []
+            ag["state"] = "player_answering"
+            await event.reply("تم تسجيل مزايدتك " + str(bid) + ".\n\nابدأ بإرسال الإجابات، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط زر أنهيت الإجابة.")
+            kb = [[Button.inline("أنهيت الإجابة", b"ai_finish_player")]]
+            await event.reply("جاهز؟", buttons=kb)
+            return
+        if ag["state"] == "player_answering":
+            ag["player_answers"].append(txt)
+            return
+        if ag["state"] == "ai_turn":
+            return await event.reply("انتظر دور الذكاء الاصطناعي.")
+        return
+
     sess = private_sessions.get(uid)
     if not sess:
         return
