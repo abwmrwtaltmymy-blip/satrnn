@@ -14,6 +14,21 @@ except Exception:
 
 _gemini_client = None
 
+def safe_str(v, default=""):
+    if v is None:
+        return default
+    if isinstance(v, bytes):
+        try:
+            return v.decode("utf-8", errors="ignore")
+        except Exception:
+            return default
+    if not isinstance(v, str):
+        try:
+            return str(v)
+        except Exception:
+            return default
+    return v
+
 def _init_gemini():
     global _gemini_client
     if _gemini_client is not None:
@@ -60,6 +75,16 @@ def clean_name(name, default_fallback=SAFE_FALLBACK):
 def name_has_bad_word(name):
     if not name:
         return False
+    if isinstance(name, bytes):
+        try:
+            name = name.decode("utf-8", errors="ignore")
+        except Exception:
+            return True
+    if not isinstance(name, str):
+        try:
+            name = str(name)
+        except Exception:
+            return True
     low = name.lower()
     if re.search(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", low):
         return True
@@ -72,7 +97,19 @@ def _normalize_answers(answers_list):
     uniq = []
     seen = set()
     for a in answers_list:
-        s = (a or "").strip()
+        if a is None:
+            continue
+        if isinstance(a, bytes):
+            try:
+                a = a.decode("utf-8", errors="ignore")
+            except Exception:
+                continue
+        if not isinstance(a, str):
+            try:
+                a = str(a)
+            except Exception:
+                continue
+        s = a.strip()
         if len(s) < 2:
             continue
         k = s.lower()
@@ -116,26 +153,6 @@ def _parse_gemini_json(text):
     except Exception:
         return None
 
-def _parse_gemini_list(text):
-    if not text:
-        return None
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        data = json.loads(cleaned[start:end + 1])
-        if isinstance(data, list):
-            return data
-        return None
-    except Exception:
-        return None
-
 async def evaluate_answers_with_ai(question, expected_count, answers_list):
     if not answers_list:
         return False, "لم يتم إرسال أي إجابة."
@@ -149,7 +166,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
 
     prompt = (
         "قيّم إجابات لاعب في تحدي سريع.\n\n"
-        "التصنيف المطلوب: " + question + "\n"
+        "التصنيف المطلوب: " + str(question) + "\n"
         "العدد المطلوب: " + str(expected_count) + "\n"
         "عدد الإجابات المستلمة: " + str(len(uniq)) + "\n"
         "الإجابات:\n"
@@ -169,8 +186,9 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
             model="gemini-2.5-flash",
             contents=prompt,
         )
-        text = (response.text or "").strip()
+        text = safe_str(response.text, "").strip()
     except Exception as e:
+        print("Gemini eval failed:", str(e))
         ok, reason = _local_fallback_check(expected_count, uniq)
         return ok, "تعذر تحليل الذكاء الاصطناعي، تم الاعتماد على الفحص المحلي. " + reason
 
@@ -181,7 +199,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
 
     correct = _to_bool(data.get("correct"))
     count_raw = data.get("count")
-    reason = data.get("reason") or ""
+    reason = safe_str(data.get("reason"), "")
     try:
         count_int = int(count_raw) if count_raw is not None else len(uniq)
     except Exception:
@@ -195,6 +213,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
     return False, "عدد الإجابات الصحيحة والمختلفة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
 
 async def ai_generate_answers(question, target_count, difficulty="medium"):
+    question = safe_str(question, "")
     if not _init_gemini():
         return _local_generate_answers(question, target_count, difficulty)
     accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
@@ -212,7 +231,7 @@ async def ai_generate_answers(question, target_count, difficulty="medium"):
             model="gemini-2.5-flash",
             contents=prompt,
         )
-        text = (response.text or "").strip()
+        text = safe_str(response.text, "").strip()
         lines = [l.strip() for l in text.split("\n") if l.strip()]
         cleaned = []
         for l in lines:
@@ -222,7 +241,8 @@ async def ai_generate_answers(question, target_count, difficulty="medium"):
         if not cleaned:
             return _local_generate_answers(question, target_count, difficulty)
         return cleaned[:actual_count]
-    except Exception:
+    except Exception as e:
+        print("Gemini generate answers failed:", str(e))
         return _local_generate_answers(question, target_count, difficulty)
 
 def _local_generate_answers(question, target_count, difficulty="medium"):
@@ -279,6 +299,7 @@ def _local_generate_answers(question, target_count, difficulty="medium"):
     return picked
 
 async def ai_generate_bid(question, difficulty="medium"):
+    question = safe_str(question, "")
     if not _init_gemini():
         return _local_generate_bid(question, difficulty)
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
@@ -294,13 +315,14 @@ async def ai_generate_bid(question, difficulty="medium"):
             model="gemini-2.5-flash",
             contents=prompt,
         )
-        text = (response.text or "").strip()
+        text = safe_str(response.text, "").strip()
         digits = re.findall(r"\d+", text)
         if digits:
             n = int(digits[0])
             return max(1, min(n, 50))
         return _local_generate_bid(question, difficulty)
-    except Exception:
+    except Exception as e:
+        print("Gemini bid failed:", str(e))
         return _local_generate_bid(question, difficulty)
 
 def _local_generate_bid(question, difficulty="medium"):
@@ -317,13 +339,13 @@ def translate_error(err):
     if "usernotparticipant" in low:
         return "البوت ليس عضوًا في القناة المطلوبة."
     if "messagenotmodified" in low:
-        return "الرسالة لم يتم تعديلها (نفس المحتوى)."
+        return "الرسالة لم يتم تعديلها."
     if "userbanned" in low or "userbannedinchannel" in low:
         return "البوت محظور من قبل تلغرام في هذه المجموعة."
     if "peeridinvalid" in low:
         return "معرّف المجموعة أو المستخدم غير صحيح."
     if "floodwait" in low:
-        return "تم تقييد الطلبات مؤقتًا، انتظر قليلًا ثم أعد المحاولة."
+        return "تم تقييد الطلبات مؤقتًا، انتظر قليلًا."
     if "button" in low and "invalid" in low:
         return "خطأ في تهيئة أحد الأزرار."
     if "chat not found" in low or "cannot find" in low:
@@ -337,12 +359,12 @@ def translate_error(err):
     if "api key" in low or "permission denied" in low or "unauthenticated" in low:
         return "مفتاح الذكاء الاصطناعي غير صالح أو منتهي."
     if "quota" in low or "resource exhausted" in low:
-        return "تم استهلاك حصة الذكاء الاصطناعي. انتظر قليلًا ثم أعد المحاولة."
+        return "تم استهلاك حصة الذكاء الاصطناعي. انتظر قليلًا."
     if "message to delete" in low or "message delete" in low:
         return "تعذر حذف بعض الرسائل."
     if "message not found" in low:
         return "إحدى الرسائل المطلوب حذفها غير موجودة."
-    return "حدث خطأ: " + str(err)
+    return "حدث خطأ: " + safe_str(err, "")
 
 def safe_execute(func):
     async def wrapper(event, *args, **kwargs):
@@ -425,8 +447,8 @@ async def require_subscription(event):
     if missing:
         buttons = []
         for s in missing:
-            uname = s["username"].lstrip("@")
-            buttons.append([Button.url("اشترك في " + s["username"], "https://t.me/" + uname)])
+            uname = safe_str(s["username"], "").lstrip("@")
+            buttons.append([Button.url("اشترك في " + safe_str(s["username"], ""), "https://t.me/" + uname)])
         await event.reply("يجب الاشتراك في القنوات التالية أولاً ثم إعادة المحاولة.", buttons=buttons)
         return False
     return True
