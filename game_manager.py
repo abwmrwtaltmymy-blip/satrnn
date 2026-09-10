@@ -41,6 +41,7 @@ class InternalGame:
         self.bidding_task = None
         self.answer_task = None
         self.tracked_messages = []
+        self.round_messages = []
         self.pin_msg_id = None
         self.consecutive_timeouts = 0
 
@@ -74,6 +75,7 @@ class Tournament:
         self.bidding_task = None
         self.answer_task = None
         self.tracked_messages = []
+        self.round_messages = []
         self.pin_msg_id = None
         self.consecutive_timeouts = 0
 
