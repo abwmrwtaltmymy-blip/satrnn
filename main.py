@@ -376,7 +376,7 @@ async def cb_ai_start_round(event):
     g["question"] = question
     g["state"] = "player_bid"
     text = ("الجولة " + str(g["round"]) + "\n\n"
-            "السؤال: اذكر أكبر عدد من " + safe_str(question, "") + "\n\n"
+            "السؤال: " + safe_str(question, "") + "\n\n"
             "نقاطك: " + str(g["player_points"]) + "\n"
             "نقاط الذكاء الاصطناعي: " + str(g["ai_points"]) + "\n\n"
             "أرسل رقمًا يمثل ما تستطيع ذكره من هذا التصنيف.")
@@ -427,7 +427,7 @@ async def cb_ai_next_round(event):
     g["question"] = question
     g["state"] = "player_bid"
     text = ("الجولة " + str(g["round"]) + "\n\n"
-            "السؤال: اذكر أكبر عدد من " + safe_str(question, "") + "\n\n"
+            "السؤال: " + safe_str(question, "") + "\n\n"
             "نقاطك: " + str(g["player_points"]) + "\n"
             "نقاط الذكاء الاصطناعي: " + str(g["ai_points"]) + "\n\n"
             "أرسل رقمًا يمثل ما تستطيع ذكره.")
@@ -681,7 +681,7 @@ async def start_round_internal(g):
         on = "لاعب"
     await delete_pinned(g, g.chat_id)
     text = ("الجولة " + str(g.round) + "\n\n"
-            "السؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\n\n"
+            "السؤال: " + safe_str(g.question, "") + "\n\n"
             "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
             "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
             "المزايد: " + bn + "\n"
@@ -689,7 +689,7 @@ async def start_round_internal(g):
             "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
     await send_to_group(g, g.chat_id, text)
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
     except Exception:
         pass
     g.bidding_task = asyncio.create_task(bidding_timeout_internal(g, b))
@@ -857,7 +857,7 @@ async def cb_close_nom(event):
                "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
                "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
                "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
-               "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n"
+               "4. البوت يقيّم الإجابات.\n\n"
                "تم اختيار الفريق الممثل لـ " + safe_str(gname, "") + "\n\n"
                "الخصم: " + safe_str(opp, "") + "\n\n"
                "الفريق:\n- " + names + "\n\n"
@@ -917,7 +917,7 @@ async def start_round_tournament(m):
             break
     for gid in m.both_groups():
         text = ("الجولة " + str(m.round) + "\n\n"
-                "السؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\n\n"
+                "السؤال: " + safe_str(m.question, "") + "\n\n"
                 "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
                 "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
@@ -930,7 +930,7 @@ async def start_round_tournament(m):
         except Exception:
             pass
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
     except Exception:
         pass
     m.bidding_task = asyncio.create_task(bidding_timeout_tournament(m, b))
@@ -1068,6 +1068,8 @@ async def private_handler(event):
             bid = int(text)
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
+            if bid == 0:
+                return await event.reply("أرسل رقمًا أكبر من صفر.")
             g.current_bid = bid
             g.consecutive_timeouts = 0
             try:
@@ -1111,6 +1113,8 @@ async def private_handler(event):
             bid = int(text)
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم بين 1 و 50.")
+            if bid == 0:
+                return await event.reply("أرسل رقمًا أكبر من صفر.")
             m.current_bid = bid
             m.consecutive_timeouts = 0
             try:
