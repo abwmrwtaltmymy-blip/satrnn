@@ -41,6 +41,7 @@ class InternalGame:
         self.bidding_task = None
         self.answer_task = None
         self.tracked_messages = []
+        self.pin_msg_id = None
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -72,6 +73,7 @@ class Tournament:
         self.bidding_task = None
         self.answer_task = None
         self.tracked_messages = []
+        self.pin_msg_id = None
 
     def resolve_top(self, gid):
         lst = []
