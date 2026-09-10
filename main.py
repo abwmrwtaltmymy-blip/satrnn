@@ -14,6 +14,23 @@ from game_manager import (internal_games, tournaments, private_sessions, matchma
 
 init_db()
 
+from config import API_ID, API_HASH, BOT_TOKEN, GEMINI_API_KEY, DEV_ID
+
+missing = []
+if not API_ID:
+    missing.append("API_ID")
+if not API_HASH:
+    missing.append("API_HASH")
+if not BOT_TOKEN:
+    missing.append("BOT_TOKEN")
+if not GEMINI_API_KEY:
+    missing.append("GEMINI_API_KEY")
+if not DEV_ID:
+    missing.append("DEV_ID")
+
+if missing:
+    raise SystemExit("متغيرات البيئة التالية ناقصة في Railway Variables أو في .env: " + ", ".join(missing))
+
 client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 async def bot_username():
