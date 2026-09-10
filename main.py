@@ -130,8 +130,8 @@ async def on_group_join(event):
     chat_title = safe_str(getattr(chat, "title", ""), "")
     if name_has_bad_word(chat_title):
         try:
-            if event.added_by:
-                await client.send_message(event.added_by, "لا يمكنني البقاء في مجموعة تحمل اسمًا مخالفًا للسياسات.")
+            await client.send_message(event.chat_id, "لا يمكنني البقاء في مجموعة تحمل اسمًا مخالفًا للسياسات.")
+            await asyncio.sleep(3)
         except Exception:
             pass
         await client.delete_dialog(event.chat_id)
@@ -143,11 +143,11 @@ async def on_group_join(event):
             if not p.bot:
                 humans += 1
         if humans < 5:
-            if event.added_by:
-                try:
-                    await client.send_message(event.added_by, "لا يمكنني الدخول لمجموعتك (" + chat_title + ") لأن عدد الأعضاء الحقيقيين أقل من 5. العدد الحالي: " + str(humans))
-                except Exception:
-                    pass
+            try:
+                await client.send_message(event.chat_id, "عدد الأعضاء الحقيقيين أقل من 5. لا يمكنني البقاء.")
+                await asyncio.sleep(3)
+            except Exception:
+                pass
             await client.delete_dialog(event.chat_id)
             return
     except Exception:
@@ -165,33 +165,21 @@ async def on_group_join(event):
             missing.append("حذف الرسائل")
         if not getattr(perms, "pin_messages", False):
             missing.append("تثبيت الرسائل")
-        if not getattr(perms, "ban_users", False):
-            missing.append("حظر المستخدمين")
-        if not getattr(perms, "change_info", False):
-            missing.append("تغيير معلومات المجموعة")
     else:
         missing.append("جميع صلاحيات المشرف")
     if (not is_admin) or missing:
         u = await bot_username()
         link = "https://t.me/" + u + "?startgroup=admin"
-        text = ("مرحبًا، لإدارة التحديات بشكل كامل أحتاج صلاحيات المشرف الكاملة:\n"
-                "1) حذف الرسائل\n2) تثبيت الرسائل\n3) حظر المستخدمين\n4) تغيير معلومات المجموعة\n\n")
+        text = "أحتاج صلاحيتين لأعمل: حذف الرسائل وتثبيت الرسائل.\n"
         if missing:
-            text += "الصلاحيات الناقصة حاليًا: " + ", ".join(missing) + ".\n\n"
-        text += "اضغط الزر أدناه لإعادة إضافتي بشكل صحيح. سأغادر المجموعة الآن."
+            text += "الناقص: " + ", ".join(missing) + ".\n"
+        text += "رقّوني وأنا أرجع."
         kb = [[Button.url("أعد إضافة البوت كمشرف", link)]]
-        target = event.added_by
-        if target:
-            try:
-                await client.send_message(target, text, buttons=kb)
-            except Exception:
-                pass
-        else:
-            try:
-                await client.send_message(event.chat_id, text, buttons=kb)
-                await asyncio.sleep(2)
-            except Exception:
-                pass
+        try:
+            await client.send_message(event.chat_id, text, buttons=kb)
+            await asyncio.sleep(3)
+        except Exception:
+            pass
         await client.delete_dialog(event.chat_id)
         return
     try:
@@ -1095,7 +1083,7 @@ async def private_handler(event):
             private_sessions[g.bidder] = {"game_type": "internal", "chat_id": g.chat_id, "role": "bidder"}
             private_sessions[g.opponent] = {"game_type": "internal", "chat_id": g.chat_id, "role": "opponent"}
             await client.send_message(g.bidder, "تم رفع المزايدة إلى " + str(newbid) + ". أرسل رقمًا أكبر أو انتظر إجبار الخصم.")
-            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_" + str(g.chat_id) + "_" + str(g.opponent)).encode())]]
+            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_" + str(g.chat_id) + "_" + str(g.bidder)).encode())]]
             await client.send_message(g.opponent, "بانتظار قرار الخصم.", buttons=kb)
         elif sess["role"] == "bidder" and g.state == "answering":
             g.answers.append(text)
@@ -1138,7 +1126,7 @@ async def private_handler(event):
             private_sessions[m.bidder] = {"game_type": "tournament", "match_id": m.match_id, "role": "bidder"}
             private_sessions[m.opponent] = {"game_type": "tournament", "match_id": m.match_id, "role": "opponent"}
             await client.send_message(m.bidder, "تم رفع المزايدة إلى " + str(newbid) + ".")
-            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_t_" + str(m.match_id) + "_" + str(m.opponent)).encode())]]
+            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_t_" + str(m.match_id) + "_" + str(m.bidder)).encode())]]
             await client.send_message(m.opponent, "بانتظار قرار الخصم.", buttons=kb)
         elif sess["role"] == "bidder" and m.state == "answering":
             m.answers.append(text)
@@ -1201,9 +1189,9 @@ async def evaluate_internal(g, bidder):
     team = 1 if bidder in g.team1 else 2
     if ok:
         if team == 1:
-            g.team1_points += 10
+            g.team2_points -= 20
         else:
-            g.team2_points += 10
+            g.team1_points -= 20
         add_points(bidder, "player", 10, bn)
         result_line = "نجاح اللاعب " + bn + "\n" + reason
     else:
@@ -1218,7 +1206,7 @@ async def evaluate_internal(g, bidder):
     text = result_line + "\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points)
     await send_to_group(g, g.chat_id, text)
     try:
-        await client.send_message(bidder, "انتهت جولتك، عد إلى المجموعة للنتائج.")
+        await client.send_message(bidder, text)
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -1274,9 +1262,9 @@ async def evaluate_tournament(m, bidder):
             break
     if ok:
         if team == 1:
-            m.team1_points += 10
+            m.team2_points -= 20
         else:
-            m.team2_points += 10
+            m.team1_points -= 20
         add_points(bidder, "player", 10, bname)
         result_line = "نجاح اللاعب " + safe_str(bname, "") + "\n" + reason
     else:
@@ -1296,6 +1284,13 @@ async def evaluate_tournament(m, bidder):
             await asyncio.sleep(0.4)
         except Exception:
             pass
+    private_text = (result_line + "\n\n" +
+                    "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n" +
+                    "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+    try:
+        await client.send_message(bidder, private_text)
+    except Exception:
+        pass
     await asyncio.sleep(1)
     await advance_round_tournament(m)
 
