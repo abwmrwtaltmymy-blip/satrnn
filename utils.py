@@ -9,11 +9,22 @@ from questions import BAD_WORDS, SAFE_FALLBACK
 _gemini_ready = False
 _gemini_model = None
 
+_gemini_client = None
+
 def _init_gemini():
-    global _gemini_ready, _gemini_model
-    if _gemini_ready:
+    global _gemini_client
+    if _gemini_client is not None:
         return True
-    if not GEMINI_API_KEY or not GEMINI_API_KEY.startswith("AIza") or len(GEMINI_API_KEY) < 30:
+    if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 20:
+        print("Gemini key missing or too short")
+        return False
+    try:
+        _gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        print("Gemini client ready")
+        return True
+    except Exception as e:
+        print("Gemini client failed:", str(e))
+        _gemini_client = None
         return False
     try:
         genai.configure(api_key=GEMINI_API_KEY)
