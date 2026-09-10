@@ -390,18 +390,22 @@ async def cb_ai_finish_player(event):
     g = ai_games.get(user_id)
     if not g or g["state"] != "player_answering":
         return await event.reply("لا توجد إجابات قيد الانتظار.")
-    await event.reply("جاري تقييم إجاباتك...")
     ok, reason = await evaluate_answers_with_ai(g["question"], g["expected_count"], g["player_answers"])
     if ok:
         g["player_points"] += 10
-        result = "نجاح دورك.\n" + reason
+        result_word = "نجحت"
     else:
         g["player_points"] -= 20
         g["ai_points"] += 10
-        result = "فشل دورك.\n" + reason
-    await event.reply(result)
-    await asyncio.sleep(1)
-    await event.reply("نقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+        result_word = "فشلت"
+    combined = (
+        "نتيجة دورك\n\n"
+        "النتيجة: " + result_word + "\n"
+        + reason + "\n\n"
+        "نقاطك: " + str(g["player_points"]) + "\n"
+        "نقاط الذكاء الاصطناعي: " + str(g["ai_points"])
+    )
+    await event.reply(combined)
     if g["player_points"] <= 0 or g["ai_points"] <= 0:
         return await finish_ai_game(user_id)
     g["state"] = "ai_turn"
@@ -434,33 +438,29 @@ async def run_ai_turn(user_id):
     if not g:
         return
     await asyncio.sleep(2)
-    try:
-        await client.send_message(user_id, "دور الذكاء الاصطناعي الآن. انتظر...")
-    except Exception:
-        pass
-    await asyncio.sleep(2)
     ai_question = get_question()
     g["ai_question"] = ai_question
     ai_bid = await ai_generate_bid(ai_question, g["difficulty"])
-    try:
-        await client.send_message(user_id, "الذكاء الاصطناعي اختار: " + safe_str(ai_question, "") + "\nوتحدى نفسه بـ " + str(ai_bid) + " إجابة.")
-    except Exception:
-        pass
-    await asyncio.sleep(2)
     answers = await ai_generate_answers(ai_question, ai_bid, g["difficulty"])
-    await asyncio.sleep(2)
     ok, reason = await evaluate_answers_with_ai(ai_question, ai_bid, answers)
     if ok:
         g["ai_points"] += 10
-        result = "نجح الذكاء الاصطناعي في دوره.\n" + reason
+        result_word = "نجح"
     else:
         g["ai_points"] -= 20
         g["player_points"] += 10
-        result = "فشل الذكاء الاصطناعي في دوره.\n" + reason
+        result_word = "فشل"
+    combined = (
+        "دور الذكاء الاصطناعي\n\n"
+        "السؤال: " + safe_str(ai_question, "") + "\n"
+        "المزايدة: " + str(ai_bid) + " إجابة\n\n"
+        "النتيجة: " + result_word + "\n"
+        + reason + "\n\n"
+        "نقاطك: " + str(g["player_points"]) + "\n"
+        "نقاط الذكاء الاصطناعي: " + str(g["ai_points"])
+    )
     try:
-        await client.send_message(user_id, result)
-        await asyncio.sleep(1)
-        await client.send_message(user_id, "نقاطك: " + str(g["player_points"]) + "\nنقاط الذكاء الاصطناعي: " + str(g["ai_points"]))
+        await client.send_message(user_id, combined)
     except Exception:
         pass
     if g["player_points"] <= 0 or g["ai_points"] <= 0:
@@ -468,7 +468,7 @@ async def run_ai_turn(user_id):
     g["state"] = "idle"
     kb = [[Button.inline("الجولة التالية", b"ai_next_round")]]
     try:
-        await client.send_message(user_id, "اضغط للجولة التالية.", buttons=kb)
+        await client.send_message(user_id, "اضغط للاستمرار.", buttons=kb)
     except Exception:
         pass
 
