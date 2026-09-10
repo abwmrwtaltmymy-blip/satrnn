@@ -28,8 +28,8 @@ class InternalGame:
         self.names = []
         self.team1 = []
         self.team2 = []
-        self.team1_points = 100
-        self.team2_points = 100
+        self.team1_points = 60
+        self.team2_points = 60
         self.round = 1
         self.state = "waiting"
         self.question = None
@@ -63,8 +63,8 @@ class Tournament:
         self.candidates = {group1_id: {}, group2_id: {}}
         self.team1 = []
         self.team2 = []
-        self.team1_points = 100
-        self.team2_points = 100
+        self.team1_points = 60
+        self.team2_points = 60
         self.round = 1
         self.question = None
         self.bidder = None
