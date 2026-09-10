@@ -372,7 +372,7 @@ def safe_execute(func):
             return await func(event, *args, **kwargs)
         except errors.ChatWriteForbiddenError:
             try:
-                await event.reply("البوت لا يمتلك صلاحية الكتابة في هذه المجموعة. رقّي البوت كمشرف.")
+                await event.reply("البوت لا يمتلك صلاحية الكتابة في هذه المجموعة.")
             except Exception:
                 pass
         except errors.ChatAdminRequiredError:
@@ -388,8 +388,13 @@ def safe_execute(func):
         except errors.MessageNotModifiedError:
             pass
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            print("=== ERROR ===")
+            print(tb)
+            print("=============")
             try:
-                await event.reply(translate_error(e))
+                await event.reply("حدث خطأ: " + str(e))
             except Exception:
                 pass
     return wrapper
