@@ -581,7 +581,12 @@ async def refresh_ready_pinned(g):
             ready_names.append(pname)
         else:
             waiting_names.append(pname)
-    text = "حالة الجاهزية: " + str(len(g.ready)) + "/" + str(g.required_total) + "\n\n"
+    text = ("كيف تلعب:\n"
+            "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
+            "2. الخصم يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
+            "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
+            "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n"
+            "حالة الجاهزية: " + str(len(g.ready)) + "/" + str(g.required_total) + "\n\n")
     if ready_names:
         text += "استعدوا:\n- " + "\n- ".join(ready_names)
     else:
@@ -675,20 +680,13 @@ async def start_round_internal(g):
     except Exception:
         on = "لاعب"
     await delete_pinned(g, g.chat_id)
-    text = ""
-    if g.round == 1:
-        text += ("كيف تلعب:\n"
-                 "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
-                 "2. الخصم يستلم رسالة في الخاص، يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
-                 "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
-                 "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n")
-    text += ("الجولة " + str(g.round) + "\n\n"
-             "السؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\n\n"
-             "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
-             "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
-             "المزايد: " + bn + "\n"
-             "الخصم: " + on + "\n\n"
-             "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
+    text = ("الجولة " + str(g.round) + "\n\n"
+            "السؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\n\n"
+            "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
+            "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
+            "المزايد: " + bn + "\n"
+            "الخصم: " + on + "\n\n"
+            "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
     await send_to_group(g, g.chat_id, text)
     try:
         await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: اذكر أكبر عدد من " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
@@ -700,11 +698,26 @@ async def bidding_timeout_internal(g, user_id):
     await asyncio.sleep(20)
     if g.state != "bidding" or g.bidder != user_id:
         return
+    g.consecutive_timeouts = getattr(g, "consecutive_timeouts", 0) + 1
     g.team1_points -= 20
     g.team2_points += 10
+    if g.consecutive_timeouts >= 2:
+        await send_to_group(g, g.chat_id, "مزايدتان فاشلتان متتاليتان.\n\nتم إنهاء التحدي لعدم التفاعل.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points))
+        await end_internal_no_winner(g)
+        return
     await send_to_group(g, g.chat_id, "انتهت مدة المزايدة دون رد.\n\nتم إقصاء المزايد تلقائيًا.\nخصم 20 نقطة من الفريق الأول وإضافة 10 نقاط للفريق الثاني.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points))
     await asyncio.sleep(1)
     await advance_round_internal(g)
+
+async def end_internal_no_winner(g):
+    g.state = "done"
+    await delete_pinned(g, g.chat_id)
+    await strip_buttons(g)
+    await asyncio.sleep(0.3)
+    await delete_tracked(g)
+    for p in g.players:
+        private_sessions.pop(p, None)
+    internal_games.pop(g.chat_id, None)
 
 async def advance_round_internal(g):
     if g.team1_points <= 0 or g.team2_points <= 0:
@@ -840,7 +853,12 @@ async def cb_close_nom(event):
         names = "\n- ".join(safe_str(p["name"], "") for p in team) if team else "لا يوجد"
         opp = m.group2_name if gid_ == m.group1_id else m.group1_name
         kb = [[Button.inline("جاهز", ("ready_t_" + str(m.match_id)).encode())]]
-        txt = ("تم اختيار الفريق الممثل لـ " + safe_str(gname, "") + "\n\n"
+        txt = ("كيف تلعب:\n"
+               "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
+               "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
+               "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
+               "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n"
+               "تم اختيار الفريق الممثل لـ " + safe_str(gname, "") + "\n\n"
                "الخصم: " + safe_str(opp, "") + "\n\n"
                "الفريق:\n- " + names + "\n\n"
                "على جميع الممثلين الضغط على زر جاهز للبدء.")
@@ -898,19 +916,13 @@ async def start_round_tournament(m):
             oname = p["name"]
             break
     for gid in m.both_groups():
-        text = ""
-        if m.round == 1:
-            text += ("كيف تلعب:\n"
-                     "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
-                     "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
-                     "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n\n")
-        text += ("الجولة " + str(m.round) + "\n\n"
-                 "السؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\n\n"
-                 "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
-                 "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
-                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
-                 "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
-                 "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
+        text = ("الجولة " + str(m.round) + "\n\n"
+                "السؤال: اذكر أكبر عدد من " + safe_str(m.question, "") + "\n\n"
+                "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
+                "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
+                "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
+                "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
+                "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
         try:
             msg = await client.send_message(gid, text)
             m.tracked_messages.append((gid, msg.id))
@@ -927,6 +939,7 @@ async def bidding_timeout_tournament(m, user_id):
     await asyncio.sleep(20)
     if m.state != "bidding" or m.bidder != user_id:
         return
+    m.consecutive_timeouts = getattr(m, "consecutive_timeouts", 0) + 1
     failing_team = 1 if any(p["user_id"] == user_id for p in m.team1) else 2
     if failing_team == 1:
         m.team1_points -= 20
@@ -938,6 +951,14 @@ async def bidding_timeout_tournament(m, user_id):
         m.team1_points += 10
         fail_name = m.group2_name
         win_name = m.group1_name
+    if m.consecutive_timeouts >= 2:
+        for gid in m.both_groups():
+            try:
+                await client.send_message(gid, "مزايدتان فاشلتان متتاليتان.\n\nتم إنهاء التحدي لعدم التفاعل.\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+            except Exception:
+                pass
+        await end_tournament_no_winner(m)
+        return
     for gid in m.both_groups():
         text = ("انتهت مدة المزايدة دون رد.\n\n"
                 "تم إقصاء المزايد تلقائيًا.\n"
@@ -952,6 +973,15 @@ async def bidding_timeout_tournament(m, user_id):
             pass
     await asyncio.sleep(1)
     await advance_round_tournament(m)
+
+async def end_tournament_no_winner(m):
+    m.state = "done"
+    await strip_buttons(m)
+    await asyncio.sleep(0.3)
+    await delete_tracked(m)
+    for p in m.team1 + m.team2:
+        private_sessions.pop(p["user_id"], None)
+    tournaments.pop(m.match_id, None)
 
 async def advance_round_tournament(m):
     if m.team1_points <= 0 or m.team2_points <= 0:
@@ -1039,6 +1069,7 @@ async def private_handler(event):
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
             g.current_bid = bid
+            g.consecutive_timeouts = 0
             try:
                 if g.bidding_task:
                     g.bidding_task.cancel()
@@ -1081,6 +1112,7 @@ async def private_handler(event):
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم بين 1 و 50.")
             m.current_bid = bid
+            m.consecutive_timeouts = 0
             try:
                 if m.bidding_task:
                     m.bidding_task.cancel()
