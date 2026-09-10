@@ -140,6 +140,9 @@ async def strip_buttons(game_obj):
         except Exception:
             pass
 
+def lives_text(points):
+    return str(points)
+
 async def send_main_menu(chat_id):
     u = await bot_username()
     text = (
@@ -624,7 +627,8 @@ async def refresh_ready_pinned(g):
             "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
             "2. الخصم يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
             "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
-            "4. البوت يقيّم الإجابات.\n\n"
+            "4. البوت يقيّم الإجابات.\n"
+            "5. كل فريق عنده 3 أرواح، أول من يفقدها يخسر.\n\n"
             "حالة الجاهزية: " + str(len(g.ready)) + "/" + str(g.required_total) + "\n\n")
     if ready_names:
         text += "استعدوا:\n- " + "\n- ".join(ready_names)
@@ -722,8 +726,8 @@ async def start_round_internal(g):
     await delete_pinned(g, g.chat_id)
     text = ("الجولة " + str(g.round) + "\n\n"
             "السؤال: " + safe_str(g.question, "") + "\n\n"
-            "نقاط الفريق الأول: " + str(g.team1_points) + "\n"
-            "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
+            "أرواح الفريق الأول: " + str(g.team1_points) + "\n"
+            "أرواح الفريق الثاني: " + str(g.team2_points) + "\n\n"
             "المزايد: " + bn + "\n"
             "الخصم: " + on + "\n\n"
             "المزايدة تجري في الخاص الآن، ولدى المزايد 40 ثانية.")
@@ -742,14 +746,16 @@ async def bidding_timeout_internal(g, user_id):
         return
     g.consecutive_timeouts = getattr(g, "consecutive_timeouts", 0) + 1
     if user_id in g.team1:
-        g.team1_points -= 20
+        g.team1_points -= 1
+        fail_name = "الفريق الأول"
     else:
-        g.team2_points -= 20
-    if g.consecutive_timeouts >= 2:
-        await send_to_group(g, g.chat_id, "مزايدتان فاشلتان متتاليتان.\n\nتم إنهاء التحدي لعدم التفاعل.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points), round_level=True)
+        g.team2_points -= 1
+        fail_name = "الفريق الثاني"
+    if g.consecutive_timeouts >= 2 or g.team1_points <= 0 or g.team2_points <= 0:
+        await send_to_group(g, g.chat_id, "تم إنهاء التحدي.\n\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points), round_level=True)
         await end_internal_no_winner(g)
         return
-    await send_to_group(g, g.chat_id, "انتهت مدة المزايدة دون رد.\n\nتم إقصاء المزايد تلقائيًا.\nخصم 20 نقطة من فريقه.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points), round_level=True)
+    await send_to_group(g, g.chat_id, "انتهت مدة المزايدة دون رد.\n\n" + fail_name + " فقد روحًا.\n\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points), round_level=True)
     await asyncio.sleep(1)
     await advance_round_internal(g)
 
@@ -790,7 +796,7 @@ async def finish_internal(g):
     await delete_tracked(g)
     await asyncio.sleep(0.3)
     try:
-        await client.send_message(g.chat_id, "انتهت المباراة.\n\nالفائز: " + winner + "\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points))
+        await client.send_message(g.chat_id, "انتهت المباراة.\n\nالفائز: " + winner + "\n\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points))
     except Exception:
         pass
     for p in g.players:
@@ -905,7 +911,8 @@ async def cb_close_nom(event):
                "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
                "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
                "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
-               "4. البوت يقيّم الإجابات.\n\n"
+               "4. البوت يقيّم الإجابات.\n"
+               "5. كل فريق عنده 3 أرواح، أول من يفقدها يخسر.\n\n"
                "تم اختيار الفريق الممثل لـ " + safe_str(gname, "") + "\n\n"
                "الخصم: " + safe_str(opp, "") + "\n\n"
                "الفريق:\n- " + names + "\n\n"
@@ -967,8 +974,8 @@ async def start_round_tournament(m):
     for gid in m.both_groups():
         text = ("الجولة " + str(m.round) + "\n\n"
                 "السؤال: " + safe_str(m.question, "") + "\n\n"
-                "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
-                "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
+                "أرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
+                "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
                 "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
                 "المزايدة في الخاص الآن، ولدى المزايد 40 ثانية.")
@@ -988,22 +995,21 @@ async def bidding_timeout_tournament(m, user_id):
     m.consecutive_timeouts = getattr(m, "consecutive_timeouts", 0) + 1
     failing_team = 1 if any(p["user_id"] == user_id for p in m.team1) else 2
     if failing_team == 1:
-        m.team1_points -= 20
+        m.team1_points -= 1
         fail_name = m.group1_name
     else:
-        m.team2_points -= 20
+        m.team2_points -= 1
         fail_name = m.group2_name
-    if m.consecutive_timeouts >= 2:
+    if m.consecutive_timeouts >= 2 or m.team1_points <= 0 or m.team2_points <= 0:
         for gid in m.both_groups():
-            await send_to_group(m, gid, "مزايدتان فاشلتان متتاليتان.\n\nتم إنهاء التحدي لعدم التفاعل.\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points), round_level=True)
+            await send_to_group(m, gid, "تم إنهاء التحدي.\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points), round_level=True)
         await end_tournament_no_winner(m)
         return
     for gid in m.both_groups():
         text = ("انتهت مدة المزايدة دون رد.\n\n"
-                "تم إقصاء المزايد تلقائيًا.\n"
-                "خصم 20 نقطة من " + safe_str(fail_name, "") + "\n\n"
-                "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
-                "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+                + safe_str(fail_name, "") + " فقد روحًا.\n\n"
+                "أرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n"
+                "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
         await send_to_group(m, gid, text, round_level=True)
     await asyncio.sleep(1)
     await advance_round_tournament(m)
@@ -1048,7 +1054,7 @@ async def finish_tournament(m):
     await asyncio.sleep(0.3)
     for gid in m.both_groups():
         try:
-            await client.send_message(gid, "انتهت المباراة.\n\nالفائز: " + safe_str(winner, "") + "\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+            await client.send_message(gid, "انتهت المباراة.\n\nالفائز: " + safe_str(winner, "") + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
         except Exception:
             pass
     for p in m.team1 + m.team2:
@@ -1213,7 +1219,7 @@ async def cb_wd_round_internal(event):
         return await event.answer("انتهت اللعبة.", alert=True)
     if uid not in g.players:
         return await event.answer("أنت لست لاعبًا.", alert=True)
-    await event.answer("تم الانسحاب.")
+    await event.answer("تم الانسحاب من الجولة.")
     try:
         if g.bidding_task:
             g.bidding_task.cancel()
@@ -1225,10 +1231,17 @@ async def cb_wd_round_internal(event):
     except Exception:
         pass
     if uid in g.team1:
-        g.team1_points -= 20
+        g.team1_points -= 1
+        fail_name = "الفريق الأول"
     elif uid in g.team2:
-        g.team2_points -= 20
-    await send_to_group(g, g.chat_id, "انسحب اللاعب من الجولة.\n\nخصم 20 نقطة من فريقه.\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points), round_level=True)
+        g.team2_points -= 1
+        fail_name = "الفريق الثاني"
+    else:
+        fail_name = "الفريق"
+    await send_to_group(g, g.chat_id, "انسحب اللاعب.\n\n" + fail_name + " فقد روحًا.\n\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points), round_level=True)
+    if g.team1_points <= 0 or g.team2_points <= 0:
+        await finish_internal(g)
+        return
     await asyncio.sleep(1)
     await advance_round_internal(g)
 
@@ -1261,7 +1274,7 @@ async def cb_wd_round_tournament(event):
     team2_ids = [p["user_id"] for p in m.team2]
     if uid not in team1_ids and uid not in team2_ids:
         return await event.answer("أنت لست لاعبًا.", alert=True)
-    await event.answer("تم الانسحاب.")
+    await event.answer("تم الانسحاب من الجولة.")
     try:
         if m.bidding_task:
             m.bidding_task.cancel()
@@ -1273,11 +1286,16 @@ async def cb_wd_round_tournament(event):
     except Exception:
         pass
     if uid in team1_ids:
-        m.team1_points -= 20
+        m.team1_points -= 1
+        fail_name = m.group1_name
     else:
-        m.team2_points -= 20
+        m.team2_points -= 1
+        fail_name = m.group2_name
     for gid in m.both_groups():
-        await send_to_group(m, gid, "انسحب اللاعب من الجولة.\n\nخصم 20 نقطة من فريقه.\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points), round_level=True)
+        await send_to_group(m, gid, "انسحب اللاعب.\n\n" + safe_str(fail_name, "") + " فقد روحًا.\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points), round_level=True)
+    if m.team1_points <= 0 or m.team2_points <= 0:
+        await finish_tournament(m)
+        return
     await asyncio.sleep(1)
     await advance_round_tournament(m)
 
@@ -1354,25 +1372,30 @@ async def evaluate_internal(g, bidder):
     team = 1 if bidder in g.team1 else 2
     if ok:
         if team == 1:
-            g.team2_points -= 20
+            g.team2_points -= 1
+            target_name = "الفريق الثاني"
         else:
-            g.team1_points -= 20
+            g.team1_points -= 1
+            target_name = "الفريق الأول"
         add_points(bidder, "player", 10, bn)
-        result_line = "نجاح اللاعب " + bn + "\n" + reason
+        result_line = "نجاح اللاعب " + bn + "\n" + reason + "\n\n" + target_name + " فقد روحًا."
     else:
         if team == 1:
-            g.team1_points -= 20
+            g.team1_points -= 1
         else:
-            g.team2_points -= 20
+            g.team2_points -= 1
         add_points(bidder, "player", -20, bn)
         result_line = "فشل اللاعب " + bn + "\n" + reason
-    text = result_line + "\n\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points)
+    text = result_line + "\n\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points)
     await send_to_group(g, g.chat_id, text, round_level=True)
     try:
         await client.send_message(bidder, text)
     except Exception:
         pass
     await asyncio.sleep(1)
+    if g.team1_points <= 0 or g.team2_points <= 0:
+        await finish_internal(g)
+        return
     await advance_round_internal(g)
 
 @client.on(events.CallbackQuery(pattern=r"^force_t_(\d+)_(\d+)$"))
@@ -1431,29 +1454,34 @@ async def evaluate_tournament(m, bidder):
             break
     if ok:
         if team == 1:
-            m.team2_points -= 20
+            m.team2_points -= 1
+            target_name = m.group2_name
         else:
-            m.team1_points -= 20
+            m.team1_points -= 1
+            target_name = m.group1_name
         add_points(bidder, "player", 10, bname)
-        result_line = "نجاح اللاعب " + safe_str(bname, "") + "\n" + reason
+        result_line = "نجاح اللاعب " + safe_str(bname, "") + "\n" + reason + "\n\n" + safe_str(target_name, "") + " فقد روحًا."
     else:
         if team == 1:
-            m.team1_points -= 20
+            m.team1_points -= 1
         else:
-            m.team2_points -= 20
+            m.team2_points -= 1
         add_points(bidder, "player", -20, bname)
         result_line = "فشل اللاعب " + safe_str(bname, "") + "\n" + reason
     for gid in m.both_groups():
-        text = result_line + "\n\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
+        text = result_line + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
         await send_to_group(m, gid, text, round_level=True)
     private_text = (result_line + "\n\n" +
-                    "نقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n" +
-                    "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+                    "أرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n" +
+                    "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
     try:
         await client.send_message(bidder, private_text)
     except Exception:
         pass
     await asyncio.sleep(1)
+    if m.team1_points <= 0 or m.team2_points <= 0:
+        await finish_tournament(m)
+        return
     await advance_round_tournament(m)
 
 @client.on(events.NewMessage(pattern=r"^/status(?:@\S+)?$"))
@@ -1469,10 +1497,10 @@ async def cmd_status(event):
         return
     g = internal_games.get(event.chat_id)
     if g:
-        return await event.reply("اللعبة الداخلية الجارية:\nالحالة: " + g.state + "\nالجولة: " + str(g.round) + "\nنقاط الفريق الأول: " + str(g.team1_points) + "\nنقاط الفريق الثاني: " + str(g.team2_points) + "\nعدد اللاعبين: " + str(len(g.players)))
+        return await event.reply("اللعبة الداخلية الجارية:\nالحالة: " + g.state + "\nالجولة: " + str(g.round) + "\nأرواح الفريق الأول: " + str(g.team1_points) + "\nأرواح الفريق الثاني: " + str(g.team2_points) + "\nعدد اللاعبين: " + str(len(g.players)))
     for m in tournaments.values():
         if event.chat_id in m.both_groups():
-            return await event.reply("تحدي كروبين جارٍ.\nالحالة: " + m.state + "\nالجولة: " + str(m.round) + "\nنقاط " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nنقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+            return await event.reply("تحدي كروبين جارٍ.\nالحالة: " + m.state + "\nالجولة: " + str(m.round) + "\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
     await event.reply("لا توجد ألعاب جارية. أرسل /start_game للبدء.")
 
 @client.on(events.NewMessage(pattern=r"^/end_game(?:@\S+)?$"))
