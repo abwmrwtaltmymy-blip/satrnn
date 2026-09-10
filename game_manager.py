@@ -40,6 +40,7 @@ class InternalGame:
         self.ready = set()
         self.bidding_task = None
         self.answer_task = None
+        self.tracked_messages = []
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -70,6 +71,7 @@ class Tournament:
         self.ready = set()
         self.bidding_task = None
         self.answer_task = None
+        self.tracked_messages = []
 
     def resolve_top(self, gid):
         lst = []
