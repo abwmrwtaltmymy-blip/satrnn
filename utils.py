@@ -1,7 +1,8 @@
 import re
 import json
 import google.generativeai as genai
-from telethon import errors, functions, Button
+from google import genai
+from google.genai import types
 from config import GEMINI_API_KEY
 from questions import BAD_WORDS, SAFE_FALLBACK
 
