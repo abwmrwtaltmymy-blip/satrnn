@@ -1,6 +1,7 @@
 import re
 import json
 import random
+import asyncio
 from telethon import errors, functions, Button
 from config import GEMINI_API_KEY
 from questions import BAD_WORDS, SAFE_FALLBACK
@@ -12,7 +13,14 @@ except Exception:
     _genai_available = False
 
 _gemini_client = None
-_gemini_model_name = None
+_gemini_models_working = []
+_gemini_lock = None
+
+def _get_lock():
+    global _gemini_lock
+    if _gemini_lock is None:
+        _gemini_lock = asyncio.Lock()
+    return _gemini_lock
 
 def safe_str(v, default=""):
     if v is None:
@@ -30,8 +38,8 @@ def safe_str(v, default=""):
     return v
 
 def _init_gemini():
-    global _gemini_client, _gemini_model_name
-    if _gemini_client is not None and _gemini_model_name is not None:
+    global _gemini_client, _gemini_models_working
+    if _gemini_client is not None and _gemini_models_working:
         return True
     if not _genai_available:
         print("google-genai not installed")
@@ -40,28 +48,73 @@ def _init_gemini():
         print("Gemini key missing")
         return False
     models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-2.5-flash-latest",
         "gemini-flash-latest",
-        "gemini-1.5-flash-latest",
+        "gemini-2.5-pro",
+        "gemini-pro-latest",
     ]
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        print("Gemini client failed:", str(e)[:200])
+        return False
+    working = []
     for model_name in models_to_try:
         try:
-            c = genai.Client(api_key=GEMINI_API_KEY)
-            test = c.models.generate_content(
+            test = client.models.generate_content(
                 model=model_name,
                 contents="قل مرحبا"
             )
             if test and test.text:
-                _gemini_client = c
-                _gemini_model_name = model_name
-                print("Gemini ready with:", model_name)
-                return True
+                working.append(model_name)
+                print("Gemini OK:", model_name)
         except Exception as e:
-            print("Gemini model failed:", model_name, "->", str(e)[:200])
+            err = str(e)[:150]
+            if "404" in err or "NOT_FOUND" in err:
+                print("Gemini skip (not available):", model_name)
+            elif "503" in err or "UNAVAILABLE" in err:
+                print("Gemini busy but usable:", model_name)
+                working.append(model_name)
+            else:
+                print("Gemini failed:", model_name, "->", err)
             continue
-    print("No working Gemini model found")
-    return False
+    if not working:
+        print("No working Gemini model found")
+        return False
+    _gemini_client = client
+    _gemini_models_working = working
+    print("Gemini ready with:", working[0], "total:", len(working))
+    return True
+
+async def _gemini_generate(prompt, max_retries=3):
+    if not _init_gemini():
+        return None
+    async with _get_lock():
+        models = list(_gemini_models_working)
+    for model_name in models:
+        for attempt in range(max_retries):
+            try:
+                response = _gemini_client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                )
+                text = safe_str(response.text, "").strip()
+                if text:
+                    return text
+            except Exception as e:
+                err = str(e)
+                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                    wait = (attempt + 1) * 1.5
+                    await asyncio.sleep(wait)
+                    continue
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    await asyncio.sleep(2)
+                    continue
+                print("Gemini generate failed:", model_name, "->", err[:150])
+                break
+    return None
 
 def clean_name(name, default_fallback=SAFE_FALLBACK):
     if name is None:
@@ -176,8 +229,6 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         return False, "لم يتم إرسال أي إجابة صالحة."
     if len(uniq) < expected_count:
         return False, "عدد الإجابات المختلفة " + str(len(uniq)) + " أقل من المطلوب " + str(expected_count) + "."
-    if not _init_gemini():
-        return _local_fallback_check(expected_count, uniq)
 
     prompt = (
         "قيّم إجابات لاعب في تحدي سريع.\n\n"
@@ -195,16 +246,10 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         "{\"correct\": true أو false, \"count\": رقم, \"reason\": \"سبب مختصر بالعربية\"}"
     )
 
-    try:
-        response = _gemini_client.models.generate_content(
-            model=_gemini_model_name,
-            contents=prompt,
-        )
-        text = safe_str(response.text, "").strip()
-    except Exception as e:
-        print("Gemini eval failed:", str(e)[:200])
+    text = await _gemini_generate(prompt)
+    if not text:
         ok, reason = _local_fallback_check(expected_count, uniq)
-        return ok, "تعذر تحليل الذكاء الاصطناعي، تم الاعتماد على الفحص المحلي. " + reason
+        return ok, "الذكاء الاصطناعي مزدحم حاليًا، تم الاعتماد على الفحص المحلي. " + reason
 
     data = _parse_gemini_json(text)
     if data is None:
@@ -228,8 +273,6 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
 
 async def ai_generate_answers(question, target_count, difficulty="medium"):
     question = safe_str(question, "")
-    if not _init_gemini():
-        return _local_generate_answers(question, target_count, difficulty)
     accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
     accuracy = accuracy_map.get(difficulty, 0.75)
     actual_count = max(1, int(round(target_count * (accuracy + random.uniform(-0.15, 0.15)))))
@@ -239,24 +282,18 @@ async def ai_generate_answers(question, target_count, difficulty="medium"):
         "اطلب منك ذكر " + str(actual_count) + " إجابة.\n"
         "أعد قائمة عربية بالإجابات فقط، كل إجابة في سطر، بدون ترقيم ولا شرح."
     )
-    try:
-        response = _gemini_client.models.generate_content(
-            model=_gemini_model_name,
-            contents=prompt,
-        )
-        text = safe_str(response.text, "").strip()
-        lines = [l.strip() for l in text.split("\n") if l.strip()]
-        cleaned = []
-        for l in lines:
-            l = re.sub(r"^[\-\*\d\.\)\s]+", "", l).strip()
-            if l and len(l) < 60:
-                cleaned.append(l)
-        if not cleaned:
-            return _local_generate_answers(question, target_count, difficulty)
-        return cleaned[:actual_count]
-    except Exception as e:
-        print("Gemini gen answers failed:", str(e)[:200])
+    text = await _gemini_generate(prompt)
+    if not text:
         return _local_generate_answers(question, target_count, difficulty)
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    cleaned = []
+    for l in lines:
+        l = re.sub(r"^[\-\*\d\.\)\s]+", "", l).strip()
+        if l and len(l) < 60:
+            cleaned.append(l)
+    if not cleaned:
+        return _local_generate_answers(question, target_count, difficulty)
+    return cleaned[:actual_count]
 
 def _local_generate_answers(question, target_count, difficulty="medium"):
     pool = {
@@ -313,8 +350,6 @@ def _local_generate_answers(question, target_count, difficulty="medium"):
 
 async def ai_generate_bid(question, difficulty="medium"):
     question = safe_str(question, "")
-    if not _init_gemini():
-        return _local_generate_bid(question, difficulty)
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
     low, high = ranges.get(difficulty, (5, 9))
     prompt = (
@@ -322,20 +357,14 @@ async def ai_generate_bid(question, difficulty="medium"):
         "السؤال: اذكر أكبر عدد من " + question + ".\n"
         "أعد رقمًا فقط بين " + str(low) + " و " + str(high) + ". لا تكتب أي نص آخر."
     )
-    try:
-        response = _gemini_client.models.generate_content(
-            model=_gemini_model_name,
-            contents=prompt,
-        )
-        text = safe_str(response.text, "").strip()
-        digits = re.findall(r"\d+", text)
-        if digits:
-            n = int(digits[0])
-            return max(1, min(n, 50))
+    text = await _gemini_generate(prompt)
+    if not text:
         return _local_generate_bid(question, difficulty)
-    except Exception as e:
-        print("Gemini bid failed:", str(e)[:200])
-        return _local_generate_bid(question, difficulty)
+    digits = re.findall(r"\d+", text)
+    if digits:
+        n = int(digits[0])
+        return max(1, min(n, 50))
+    return _local_generate_bid(question, difficulty)
 
 def _local_generate_bid(question, difficulty="medium"):
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
