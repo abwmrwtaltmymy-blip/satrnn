@@ -114,7 +114,12 @@ async def cmd_start_game(event):
     if not await require_subscription(event):
         return
     n = event.pattern_match.group(1)
-    team_size = int(n) if n else 1
+    if n is None:
+        kb = []
+        for size in (1, 2, 3, 4, 5):
+            kb.append([Button.inline(str(size) + " ضد " + str(size), ("internal_size_" + str(size)).encode())])
+        return await event.reply("اختر عدد اللاعبين لكل فريق:", buttons=kb)
+    team_size = int(n)
     if team_size < 1 or team_size > 10:
         return await event.reply("عدد اللاعبين لكل فريق يجب أن يكون بين 1 و 10.")
     await start_internal(event.chat_id, event.chat.title, team_size)
@@ -221,6 +226,9 @@ async def cb_join_internal(event):
         return await event.answer("أنت منضم بالفعل.", alert=True)
     if len(g.players) >= g.required_total:
         return await event.answer("اكتمل العدد.", alert=True)
+    users_with_chat = get_all_users()
+    if user.id not in users_with_chat:
+        return await event.answer("افتح محادثة مع البوت في الخاص واضغط /start ثم عد واضغط انضمام.", alert=True)
     name = clean_name(user.first_name)
     g.players.append(user.id)
     g.names.append(name)
@@ -254,7 +262,7 @@ async def cb_join_internal(event):
             except Exception:
                 t2.append("لاعب")
         kb = [[Button.inline("جاهز", ("ready_int_" + str(chat_id)).encode())]]
-        await client.send_message(chat_id, "اكتمل العدد وتم تقسيم الفريقين.\nالفريق الأول: " + ", ".join(t1) + "\nالفريق الثاني: " + ", ".join(t2) + "\n\nعلى الجميع الضغط على زر جاهز.", buttons=kb)
+        await client.send_message(chat_id, "اكتمل العدد وتم تقسيم الفريقين.\nالفريق الأول: " + ", ".join(t1) + "\nالفريق الثاني: " + ", ".join(t2) + "\n\nعلى الجميع الضغط على زر جاهز للبدء.", buttons=kb)
 
 @client.on(events.CallbackQuery(pattern=r"^ready_int_(-?\d+)$"))
 @safe_execute
@@ -266,9 +274,33 @@ async def cb_ready_internal(event):
     user = await event.get_sender()
     if user.id not in g.players:
         return await event.answer("أنت لست ضمن اللاعبين.", alert=True)
+    if user.id in g.ready:
+        return await event.answer("أنت مسجل جاهز مسبقًا.", alert=True)
     g.ready.add(user.id)
     await event.answer("تم تسجيل الجاهزية.")
+    ready_lines = []
+    waiting_lines = []
+    for p in g.players:
+        try:
+            pname = clean_name((await client.get_entity(p)).first_name)
+        except Exception:
+            pname = "لاعب"
+        if p in g.ready:
+            ready_lines.append(pname)
+        else:
+            waiting_lines.append(pname)
+    txt = "حالة الجاهزية: " + str(len(g.ready)) + " من " + str(g.required_total) + "\n\n"
+    if ready_lines:
+        txt += "استعدوا:\n- " + "\n- ".join(ready_lines)
+    else:
+        txt += "استعدوا: لا أحد بعد"
+    if waiting_lines:
+        txt += "\n\nبالانتظار:\n- " + "\n- ".join(waiting_lines)
+    else:
+        txt += "\n\nبالانتظار: لا أحد، الجميع جاهز"
+    await client.send_message(chat_id, txt)
     if len(g.ready) >= g.required_total:
+        await client.send_message(chat_id, "اكتملت الجاهزية. بدء الجولة الأولى.")
         await start_round_internal(g)
 
 async def start_round_internal(g):
@@ -430,6 +462,29 @@ async def cb_ready_t(event):
         return await event.answer("أنت لست من الممثلين.", alert=True)
     m.ready.add(user.id)
     await event.answer("تم تسجيل جاهزيتك.")
+    ready_lines = []
+    waiting_lines = []
+    team_ids = [p["user_id"] for p in m.team1] + [p["user_id"] for p in m.team2]
+    for pid in team_ids:
+        pname = "لاعب"
+        for p in m.team1 + m.team2:
+            if p["user_id"] == pid:
+                pname = p["name"]
+                break
+        if pid in m.ready:
+            ready_lines.append(pname)
+        else:
+            waiting_lines.append(pname)
+    txt = "حالة الجاهزية للتحدي: " + str(len(m.ready)) + " من " + str(len(team_ids)) + "\n\n"
+    if ready_lines:
+        txt += "استعدوا:\n- " + "\n- ".join(ready_lines)
+    else:
+        txt += "استعدوا: لا أحد بعد"
+    if waiting_lines:
+        txt += "\n\nبالانتظار:\n- " + "\n- ".join(waiting_lines)
+    else:
+        txt += "\n\nبالانتظار: لا أحد، الجميع جاهز"
+    await client.send_message(gid, txt)
     needed = len(m.team1) + len(m.team2)
     if needed > 0 and len(m.ready) >= needed:
         await start_round_tournament(m)
