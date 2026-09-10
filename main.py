@@ -180,7 +180,7 @@ async def on_group_join(event):
 @client.on(events.NewMessage(pattern=r"^/start(?:@\S+)?(?: (.+))?$"))
 @safe_execute
 async def cmd_start(event):
-    payload = event.pattern_match.group(1) or ""
+    payload = safe_str(event.pattern_match.group(1), "")
     if event.is_private:
         user = await event.get_sender()
         register_user(user.id, clean_name(user.first_name))
@@ -334,7 +334,9 @@ async def cb_ai_menu(event):
 @client.on(events.CallbackQuery(pattern=r"^ai_diff_(easy|medium|hard)$"))
 @safe_execute
 async def cb_ai_difficulty(event):
-    difficulty = event.pattern_match.group(1)
+    difficulty = safe_str(event.pattern_match.group(1), "medium").strip().lower()
+    if difficulty not in ("easy", "medium", "hard"):
+        difficulty = "medium"
     user_id = event.sender_id
     await event.answer("بدء اللعبة")
     ai_games[user_id] = {
@@ -347,7 +349,8 @@ async def cb_ai_difficulty(event):
         "player_answers": [],
         "expected_count": 0,
     }
-    label = {"easy": "سهل", "medium": "متوسط", "hard": "صعب"}.get(difficulty, difficulty)
+    labels = {"easy": "سهل", "medium": "متوسط", "hard": "صعب"}
+    label = labels.get(difficulty, "متوسط")
     text = ("بدأت اللعبة ضد الذكاء الاصطناعي\n\n"
             "مستوى الصعوبة: " + label + "\n"
             "نقاطك: 100\n"
@@ -962,7 +965,7 @@ async def private_handler(event):
 
     if uid in ai_games:
         ag = ai_games[uid]
-        txt = (event.text or "").strip()
+        txt = safe_str(event.text, "").strip()
         if txt.startswith("/"):
             return
         if ag["state"] == "player_bid":
@@ -988,7 +991,7 @@ async def private_handler(event):
     sess = private_sessions.get(uid)
     if not sess:
         return
-    text = (event.text or "").strip()
+    text = safe_str(event.text, "").strip()
 
     if sess["game_type"] == "internal":
         g = internal_games.get(sess["chat_id"])
