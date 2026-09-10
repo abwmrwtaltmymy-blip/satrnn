@@ -14,23 +14,6 @@ from game_manager import (internal_games, tournaments, private_sessions, matchma
 
 init_db()
 
-from config import API_ID, API_HASH, BOT_TOKEN, GEMINI_API_KEY, DEV_ID
-
-missing = []
-if not API_ID:
-    missing.append("API_ID")
-if not API_HASH:
-    missing.append("API_HASH")
-if not BOT_TOKEN:
-    missing.append("BOT_TOKEN")
-if not GEMINI_API_KEY:
-    missing.append("GEMINI_API_KEY")
-if not DEV_ID:
-    missing.append("DEV_ID")
-
-if missing:
-    raise SystemExit("متغيرات البيئة التالية ناقصة في Railway Variables أو في .env: " + ", ".join(missing))
-
 client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 async def bot_username():
@@ -97,7 +80,23 @@ async def cmd_start(event):
     if event.is_private:
         user = await event.get_sender()
         register_user(user.id, clean_name(user.first_name))
-        await event.reply("أهلًا بك في بوت تحدي الثلاثين ثانية. أضفني إلى مجموعة فيها 5 أعضاء حقيقيين على الأقل ثم استخدم /start_game")
+        u = await bot_username()
+        text = (
+            "أهلًا بك في بوت تحدي الثلاثين ثانية.\n\n"
+            "هذا البوت ينظم تحديات سريعة بين الكروبات والأفراد، مع نظام مزايدة في الخاص، "
+            "وعدّاد ثلاثين ثانية للإجابة، وتقييم الإجابات بالذكاء الاصطناعي، "
+            "ولوحة متصدرين لأفضل الكروبات واللاعبين.\n\n"
+            "خطوات اللعب:\n"
+            "1) أضف البوت إلى مجموعتك بصفة مشرف.\n"
+            "2) يجب أن تحتوي المجموعة على 5 أعضاء حقيقيين على الأقل.\n"
+            "3) اكتب /start_game داخل المجموعة لبدء التحدي.\n"
+            "4) اختر نوع اللعب من الأزرار التي تظهر.\n\n"
+            "ملاحظة: جميع الأدوار والمزايدات والإجابات تحدث في الخاص، والنتائج تُعلن في المجموعة."
+        )
+        kb = [
+            [Button.url("أضف البوت إلى مجموعتك", "https://t.me/" + u + "?startgroup=admin")],
+        ]
+        await event.reply(text, buttons=kb)
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
@@ -520,8 +519,6 @@ async def private_handler(event):
         pass
     sess = private_sessions.get(uid)
     if not sess:
-        if event.text == "/start":
-            await event.reply("أضفني إلى مجموعتك وابدأ بـ /start_game")
         return
     text = (event.text or "").strip()
 
