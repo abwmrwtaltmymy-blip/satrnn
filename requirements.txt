@@ -1,6 +1,2 @@
-bs4
-aiosqlite
-python-dotenv
 telethon
-aiohttp
-pyTelegramBotAPI
+google-generativeai
