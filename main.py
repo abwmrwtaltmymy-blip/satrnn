@@ -35,7 +35,7 @@ async def is_group_admin(event):
 async def cancel_tasks(game_obj):
     if game_obj is None:
         return
-    for attr in ("bidding_task", "answer_task"):
+    for attr in ("bidding_task", "answer_task", "opponent_task"):
         t = getattr(game_obj, attr, None)
         if t:
             try:
@@ -289,6 +289,12 @@ async def cmd_start_game(event):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
     if not await require_subscription(event):
         return
+    if event.chat_id in internal_games:
+        existing = internal_games[event.chat_id]
+        if getattr(existing, "state", "") in ("done", "finished"):
+            internal_games.pop(event.chat_id, None)
+        else:
+            return await event.reply("توجد لعبة جارية بالفعل في هذه المجموعة.")
     n = event.pattern_match.group(1)
     if n is None:
         raw = safe_str(event.text, "").strip()
@@ -622,7 +628,7 @@ async def refresh_ready_pinned(g):
             waiting_names.append(pname)
     text = ("كيف تلعب:\n"
             "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
-            "2. الخصم يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
+            "2. الخصم يقدر يجبره على الإجابة فقط.\n"
             "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
             "4. البوت يقيّم الإجابات.\n"
             "5. كل فريق عنده 3 أرواح، أول من يفقدها يخسر.\n\n"
@@ -640,8 +646,12 @@ async def refresh_ready_pinned(g):
 
 async def start_internal(chat_id, chat_name, team_size):
     if chat_id in internal_games:
-        await client.send_message(chat_id, "توجد لعبة جارية بالفعل في هذه المجموعة.")
-        return
+        existing = internal_games[chat_id]
+        if getattr(existing, "state", "") in ("done", "finished"):
+            internal_games.pop(chat_id, None)
+        else:
+            await client.send_message(chat_id, "توجد لعبة جارية بالفعل في هذه المجموعة.")
+            return
     g = InternalGame(chat_id, chat_name, team_size)
     internal_games[chat_id] = g
     u = await bot_username()
@@ -719,6 +729,40 @@ async def answer_countdown(game_obj, chat_id, user_id, label):
             return
         prev = cp
 
+async def opponent_countdown(game_obj, chat_id, user_id, label):
+    checkpoints = [15, 10, 5, 3, 2, 1]
+    prev = 20
+    for cp in checkpoints:
+        delay = prev - cp
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if game_obj is None:
+            return
+        if getattr(game_obj, "state", None) != "opponent_choice":
+            return
+        if getattr(game_obj, "opponent", None) != user_id:
+            return
+        try:
+            await client.send_message(user_id, "بقي " + str(cp) + " ثواني" + label)
+        except Exception:
+            return
+        prev = cp
+
+async def opponent_timeout_internal(g, user_id):
+    await asyncio.sleep(20)
+    if g.state != "opponent_choice" or g.opponent != user_id:
+        return
+    await send_to_group(g, g.chat_id, "انتهى وقت الخصم دون قرار.\n\nتم إجبار اللاعب على الإجابة تلقائيًا.", round_level=True)
+    await begin_answer_internal(g, g.bidder)
+
+async def opponent_timeout_tournament(m, user_id):
+    await asyncio.sleep(20)
+    if m.state != "opponent_choice" or m.opponent != user_id:
+        return
+    for gid in m.both_groups():
+        await send_to_group(m, gid, "انتهى وقت الخصم دون قرار.\n\nتم إجبار اللاعب على الإجابة تلقائيًا.", round_level=True)
+    await begin_answer_tournament(m, m.bidder)
+
 @client.on(events.CallbackQuery(pattern=r"^ready_int_(-?\d+)$"))
 @safe_execute
 async def cb_ready_internal(event):
@@ -776,12 +820,8 @@ async def start_round_internal(g):
                    [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
     try:
         await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.", buttons=kb_withdraw)
-    except Exception as e:
-        import traceback
-        print("=== ERROR SENDING TO BIDDER ===")
-        print("bidder id:", b)
-        traceback.print_exc()
-        print("================================")
+    except Exception:
+        pass
     g.bidding_task = asyncio.create_task(bidding_timeout_internal(g, b))
     asyncio.create_task(bidding_countdown(g, g.chat_id, b, " للمزايدة"))
 
@@ -954,7 +994,7 @@ async def cb_close_nom(event):
         kb = [[Button.inline("جاهز", ("ready_t_" + str(m.match_id)).encode())]]
         txt = ("كيف تلعب:\n"
                "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا.\n"
-               "2. الخصم يقدر يجبره أو يزايد برقم أعلى.\n"
+               "2. الخصم يقدر يجبره على الإجابة فقط.\n"
                "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
                "4. البوت يقيّم الإجابات.\n"
                "5. كل فريق عنده 3 أرواح، أول من يفقدها يخسر.\n\n"
@@ -1168,31 +1208,16 @@ async def private_handler(event):
             g.state = "opponent_choice"
             opp = g.opponent
             kb = [[Button.inline("إجباره على الإجابة " + str(bid), ("force_" + str(g.chat_id) + "_" + str(uid)).encode())],
-                  [Button.inline("مزايدة أعلى", ("outbid_" + str(g.chat_id) + "_" + str(uid)).encode())],
                   [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
                   [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-            await client.send_message(opp, "خصمك قال إنه يستطيع ذكر " + str(bid) + " من " + safe_str(g.question, "") + ".\nإما أن تزايد برقم أعلى، أو تجبره على الإجابة بالرقم الذي قاله.", buttons=kb)
+            await client.send_message(opp, "خصمك قال إنه يستطيع ذكر " + str(bid) + " من " + safe_str(g.question, "") + ".\nهل تجبره على الإجابة؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم تسجيل مزايدتك.")
+            asyncio.create_task(opponent_countdown(g, g.chat_id, opp, " لاتخاذ القرار"))
+            g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, opp))
         elif sess["role"] == "opponent" and g.state == "opponent_choice":
             if not text.isdigit():
-                return await event.reply("أرسل رقمًا أعلى، أو استخدم الأزرار.")
-            newbid = int(text)
-            if newbid < 1 or newbid > 50:
-                return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
-            if newbid <= g.current_bid:
-                return await event.reply("يجب أن يكون أكبر من " + str(g.current_bid) + ".")
-            g.current_bid = newbid
-            old_bidder = g.bidder
-            old_opponent = g.opponent
-            g.bidder = old_opponent
-            g.opponent = old_bidder
-            private_sessions[g.bidder] = {"game_type": "internal", "chat_id": g.chat_id, "role": "bidder"}
-            private_sessions[g.opponent] = {"game_type": "internal", "chat_id": g.chat_id, "role": "opponent"}
-            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_" + str(g.chat_id) + "_" + str(g.bidder)).encode())],
-                  [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
-                  [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-            await client.send_message(g.bidder, "تم رفع المزايدة إلى " + str(newbid) + ". أرسل رقمًا أكبر أو انتظر إجبار الخصم.")
-            await client.send_message(g.opponent, "بانتظار قرار الخصم.", buttons=kb)
+                return await event.reply("استخدم الأزرار لاتخاذ القرار.")
+            return await event.reply("استخدم الأزرار لاتخاذ القرار.")
         elif sess["role"] == "bidder" and g.state == "answering":
             g.answers.append(text)
 
@@ -1217,43 +1242,28 @@ async def private_handler(event):
             m.state = "opponent_choice"
             opp = m.opponent
             kb = [[Button.inline("إجباره على الإجابة " + str(bid), ("force_t_" + str(m.match_id) + "_" + str(uid)).encode())],
-                  [Button.inline("مزايدة أعلى", ("outbid_t_" + str(m.match_id) + "_" + str(uid)).encode())],
                   [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
                   [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-            await client.send_message(opp, "خصمك قال إنه يذكر " + str(bid) + " من " + safe_str(m.question, "") + ".", buttons=kb)
+            await client.send_message(opp, "خصمك قال إنه يذكر " + str(bid) + " من " + safe_str(m.question, "") + ".\nهل تجبره على الإجابة؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم تسجيل مزايدتك.")
+            asyncio.create_task(opponent_countdown(m, m.group1_id, opp, " لاتخاذ القرار"))
+            m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, opp))
         elif sess["role"] == "opponent" and m.state == "opponent_choice":
             if not text.isdigit():
-                return await event.reply("أرسل رقمًا أعلى.")
-            newbid = int(text)
-            if newbid < 1 or newbid > 50:
-                return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
-            if newbid <= m.current_bid:
-                return await event.reply("يجب أن يكون أكبر من " + str(m.current_bid) + ".")
-            m.current_bid = newbid
-            old_bidder = m.bidder
-            old_opponent = m.opponent
-            m.bidder = old_opponent
-            m.opponent = old_bidder
-            private_sessions[m.bidder] = {"game_type": "tournament", "match_id": m.match_id, "role": "bidder"}
-            private_sessions[m.opponent] = {"game_type": "tournament", "match_id": m.match_id, "role": "opponent"}
-            kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_t_" + str(m.match_id) + "_" + str(m.bidder)).encode())],
-                  [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
-                  [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-            await client.send_message(m.bidder, "تم رفع المزايدة إلى " + str(newbid) + ".")
-            await client.send_message(m.opponent, "بانتظار قرار الخصم.", buttons=kb)
+                return await event.reply("استخدم الأزرار لاتخاذ القرار.")
+            return await event.reply("استخدم الأزرار لاتخاذ القرار.")
         elif sess["role"] == "bidder" and m.state == "answering":
             m.answers.append(text)
 
 @client.on(events.CallbackQuery(pattern=r"^outbid_(-?\d+)_(\d+)$"))
 @safe_execute
 async def cb_outbid_internal(event):
-    await event.answer("أرسل الرقم الجديد في الخاص.")
+    await event.answer("هذا الزر متوقف.", alert=True)
 
 @client.on(events.CallbackQuery(pattern=r"^outbid_t_(\d+)_(\d+)$"))
 @safe_execute
 async def cb_outbid_t(event):
-    await event.answer("أرسل الرقم الجديد في الخاص.")
+    await event.answer("هذا الزر متوقف.", alert=True)
 
 @client.on(events.CallbackQuery(pattern=r"^wd_round_int_(-?\d+)$"))
 @safe_execute
@@ -1274,6 +1284,11 @@ async def cb_wd_round_internal(event):
     try:
         if g.answer_task:
             g.answer_task.cancel()
+    except Exception:
+        pass
+    try:
+        if hasattr(g, "opponent_task") and g.opponent_task:
+            g.opponent_task.cancel()
     except Exception:
         pass
     if uid in g.team1:
@@ -1331,6 +1346,11 @@ async def cb_wd_round_tournament(event):
             m.answer_task.cancel()
     except Exception:
         pass
+    try:
+        if hasattr(m, "opponent_task") and m.opponent_task:
+            m.opponent_task.cancel()
+    except Exception:
+        pass
     if uid in team1_ids:
         m.team1_points -= 1
         fail_name = m.group1_name
@@ -1374,7 +1394,15 @@ async def cb_force_internal(event):
         return await event.answer("انتهى الوقت.", alert=True)
     if g.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
-    await event.answer("تم بدء التحدي.")
+    if g.state != "opponent_choice":
+        return await event.answer("تم اتخاذ القرار مسبقًا.", alert=True)
+    await event.answer("تم إجبار الخصم على الإجابة.")
+    try:
+        if hasattr(g, "opponent_task") and g.opponent_task:
+            g.opponent_task.cancel()
+    except Exception:
+        pass
+    await send_to_group(g, g.chat_id, "تم إجبار اللاعب على الإجابة بالرقم " + str(g.current_bid) + ".", round_level=True)
     await begin_answer_internal(g, bidder)
 
 async def begin_answer_internal(g, bidder):
@@ -1455,7 +1483,16 @@ async def cb_force_t(event):
         return await event.answer("انتهى الوقت.", alert=True)
     if m.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
-    await event.answer("تم بدء التحدي.")
+    if m.state != "opponent_choice":
+        return await event.answer("تم اتخاذ القرار مسبقًا.", alert=True)
+    await event.answer("تم إجبار الخصم على الإجابة.")
+    try:
+        if hasattr(m, "opponent_task") and m.opponent_task:
+            m.opponent_task.cancel()
+    except Exception:
+        pass
+    for gid in m.both_groups():
+        await send_to_group(m, gid, "تم إجبار اللاعب على الإجابة بالرقم " + str(m.current_bid) + ".", round_level=True)
     await begin_answer_tournament(m, bidder)
 
 async def begin_answer_tournament(m, bidder):
