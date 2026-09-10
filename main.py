@@ -124,6 +124,63 @@ async def on_group_join(event):
                 except Exception:
                     pass
             await client.delete_dialog(event.chat_id)
+            return
+    except Exception:
+        pass
+    perms = None
+    try:
+        perms = await client.get_permissions(event.chat_id, me.id)
+    except Exception:
+        perms = None
+    is_admin = False
+    missing = []
+    if perms is not None:
+        is_admin = bool(getattr(perms, "is_admin", False))
+        if not getattr(perms, "delete_messages", False):
+            missing.append("حذف الرسائل")
+        if not getattr(perms, "pin_messages", False):
+            missing.append("تثبيت الرسائل")
+        if not getattr(perms, "ban_users", False):
+            missing.append("حظر المستخدمين")
+        if not getattr(perms, "change_info", False):
+            missing.append("تغيير معلومات المجموعة")
+    else:
+        missing.append("جميع صلاحيات المشرف")
+    if (not is_admin) or missing:
+        u = await bot_username()
+        link = "https://t.me/" + u + "?startgroup=admin"
+        text = (
+            "مرحبًا، شكرًا لإضافتي إلى مجموعتك (" + chat_title + ").\n\n"
+            "لكي أستطيع تنظيم التحديات بشكل كامل، أحتاج إلى صلاحيات المشرف الكاملة في المجموعة، "
+            "وتحديدًا:\n"
+            "1) حذف الرسائل\n"
+            "2) تثبيت الرسائل\n"
+            "3) حظر المستخدمين\n"
+            "4) تغيير معلومات المجموعة\n\n"
+        )
+        if missing:
+            text += "الصلاحيات الناقصة حاليًا: " + ", ".join(missing) + ".\n\n"
+        text += (
+            "يرجى إعادة إضافتي كمشرف مع تفعيل كل الصلاحيات. اضغط على الزر أدناه لإعادة الإضافة بشكل صحيح.\n\n"
+            "سأغادر المجموعة الآن، وأعود بمجرد إضافتي بالصلاحيات المطلوبة."
+        )
+        kb = [[Button.url("أعد إضافة البوت كمشرف", link)]]
+        target = event.added_by
+        if target:
+            try:
+                await client.send_message(target, text, buttons=kb)
+            except Exception:
+                pass
+        else:
+            try:
+                await client.send_message(event.chat_id, text, buttons=kb)
+                await asyncio.sleep(2)
+            except Exception:
+                pass
+        await client.delete_dialog(event.chat_id)
+        return
+    try:
+        await client.send_message(event.chat_id, "تمت إضافتي بنجاح مع كل الصلاحيات المطلوبة. للبدء أرسل /start_game داخل المجموعة.")
     except Exception:
         pass
 
