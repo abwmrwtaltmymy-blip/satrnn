@@ -585,7 +585,7 @@ async def refresh_ready_pinned(g):
             "1. المزايد يستلم رسالة في الخاص، يحدد رقمًا يمثل ما يستطيع ذكره.\n"
             "2. الخصم يقدر يجبره على الإجابة أو يزايد برقم أعلى.\n"
             "3. المجيب يرسل الإجابات في الخاص، كل إجابة في رسالة منفصلة.\n"
-            "4. البوت يقيّم الإجابات بالذكاء الاصطناعي.\n\n"
+            "4. البوت يقيّم الإجابات.\n\n"
             "حالة الجاهزية: " + str(len(g.ready)) + "/" + str(g.required_total) + "\n\n")
     if ready_names:
         text += "استعدوا:\n- " + "\n- ".join(ready_names)
@@ -686,16 +686,16 @@ async def start_round_internal(g):
             "نقاط الفريق الثاني: " + str(g.team2_points) + "\n\n"
             "المزايد: " + bn + "\n"
             "الخصم: " + on + "\n\n"
-            "المزايدة تجري في الخاص الآن، ولدى المزايد 20 ثانية.")
+            "المزايدة تجري في الخاص الآن، ولدى المزايد 40 ثانية.")
     await send_to_group(g, g.chat_id, text)
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(g.round) + ".\nالسؤال: " + safe_str(g.question, "") + "\nأرسل رقمًا فقط خلال 40 ثانية.")
     except Exception:
         pass
     g.bidding_task = asyncio.create_task(bidding_timeout_internal(g, b))
 
 async def bidding_timeout_internal(g, user_id):
-    await asyncio.sleep(20)
+    await asyncio.sleep(40)
     if g.state != "bidding" or g.bidder != user_id:
         return
     g.consecutive_timeouts = getattr(g, "consecutive_timeouts", 0) + 1
@@ -922,7 +922,7 @@ async def start_round_tournament(m):
                 "نقاط " + safe_str(m.group2_name, "") + ": " + str(m.team2_points) + "\n\n"
                 "المزايد: " + safe_str(bname, "") + " من " + safe_str(m.group1_name, "") + "\n"
                 "الخصم: " + safe_str(oname, "") + " من " + safe_str(m.group2_name, "") + "\n\n"
-                "المزايدة في الخاص الآن، ولدى المزايد 20 ثانية.")
+                "المزايدة في الخاص الآن، ولدى المزايد 40 ثانية.")
         try:
             msg = await client.send_message(gid, text)
             m.tracked_messages.append((gid, msg.id))
@@ -930,13 +930,13 @@ async def start_round_tournament(m):
         except Exception:
             pass
     try:
-        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 20 ثانية.")
+        await client.send_message(b, "بدأت المزايدة للجولة " + str(m.round) + ".\nالسؤال: " + safe_str(m.question, "") + "\nأرسل رقمًا فقط خلال 40 ثانية.")
     except Exception:
         pass
     m.bidding_task = asyncio.create_task(bidding_timeout_tournament(m, b))
 
 async def bidding_timeout_tournament(m, user_id):
-    await asyncio.sleep(20)
+    await asyncio.sleep(40)
     if m.state != "bidding" or m.bidder != user_id:
         return
     m.consecutive_timeouts = getattr(m, "consecutive_timeouts", 0) + 1
@@ -1068,8 +1068,6 @@ async def private_handler(event):
             bid = int(text)
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم يجب أن يكون بين 1 و 50.")
-            if bid == 0:
-                return await event.reply("أرسل رقمًا أكبر من صفر.")
             g.current_bid = bid
             g.consecutive_timeouts = 0
             try:
@@ -1113,8 +1111,6 @@ async def private_handler(event):
             bid = int(text)
             if bid <= 0 or bid > 50:
                 return await event.reply("الرقم بين 1 و 50.")
-            if bid == 0:
-                return await event.reply("أرسل رقمًا أكبر من صفر.")
             m.current_bid = bid
             m.consecutive_timeouts = 0
             try:
