@@ -40,10 +40,14 @@ class InternalGame:
         self.ready = set()
         self.bidding_task = None
         self.answer_task = None
+        self.opponent_task = None
         self.tracked_messages = []
         self.round_messages = []
         self.pin_msg_id = None
         self.consecutive_timeouts = 0
+        self._name_cache = {}
+        self.team1_label = ""
+        self.team2_label = ""
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -74,6 +78,7 @@ class Tournament:
         self.ready = set()
         self.bidding_task = None
         self.answer_task = None
+        self.opponent_task = None
         self.tracked_messages = []
         self.round_messages = []
         self.pin_msg_id = None
