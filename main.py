@@ -1013,7 +1013,7 @@ async def cb_ready_internal(event):
             pass
         await asyncio.sleep(1)
         await send_teams_intro_internal(g)
-        await asyncio.sleep(2)
+        await asyncio.sleep(6)
         await start_round_internal(g)
 
 async def send_teams_intro_internal(g):
@@ -1297,7 +1297,7 @@ async def cb_ready_t(event):
     if needed > 0 and len(m.ready) >= needed:
         await asyncio.sleep(1)
         await send_teams_intro_tournament(m)
-        await asyncio.sleep(2)
+        await asyncio.sleep(6)
         await start_round_tournament(m)
 
 async def send_teams_intro_tournament(m):
