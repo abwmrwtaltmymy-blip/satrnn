@@ -26,6 +26,7 @@ TEAM_NAMES = [
     ("فريق الواعيين", "فريق الترولرية"), 
   ("فريق رزدنت ايفل" ، "فريق ماينكرافت")
 ]
+
 def user_link(user_id, name):
     return "[" + name + "](tg://user?id=" + str(user_id) + ")"
 
@@ -848,7 +849,14 @@ async def join_timeout_internal(chat_id):
     internal_games.pop(chat_id, None)
     for p in g.players:
         private_sessions.pop(p, None)
+    try:
+        if g.pin_msg_id:
+            await client.unpin_message(chat_id, g.pin_msg_id)
+    except Exception:
+        pass
     await delete_pinned(g, chat_id)
+    await strip_buttons(g)
+    await asyncio.sleep(0.3)
     await delete_tracked(g)
     try:
         await client.send_message(chat_id, "تم إلغاء التحدي لعدم اكتمال العدد خلال دقيقتين.")
@@ -916,16 +924,42 @@ async def opponent_timeout_internal(g, user_id):
     await asyncio.sleep(20)
     if g.state != "opponent_choice" or g.opponent != user_id:
         return
-    await send_to_group(g, g.chat_id, "انتهى وقت الخصم دون قرار.\n\nتم إجبار اللاعب على الإجابة تلقائيًا.", round_level=True)
-    await begin_answer_internal(g, g.bidder)
+    if user_id in g.team1:
+        g.team1_points -= 1
+        fail_name = g.team1_label
+    else:
+        g.team2_points -= 1
+        fail_name = g.team2_label
+    uname = g._name_cache.get(user_id, "لاعب") if hasattr(g, "_name_cache") else "لاعب"
+    await send_to_group(g, g.chat_id, "الخصم " + user_link(user_id, uname) + " تأخر في اتخاذ القرار.\n\n" + fail_name + " فقد روحًا.\n\nأرواح " + g.team1_label + ": " + str(g.team1_points) + "\nأرواح " + g.team2_label + ": " + str(g.team2_points), round_level=True)
+    if g.team1_points <= 0 or g.team2_points <= 0:
+        await finish_internal(g)
+        return
+    await asyncio.sleep(1)
+    await advance_round_internal(g)
 
 async def opponent_timeout_tournament(m, user_id):
     await asyncio.sleep(20)
     if m.state != "opponent_choice" or m.opponent != user_id:
         return
+    if any(p["user_id"] == user_id for p in m.team1):
+        m.team1_points -= 1
+        fail_name = m.group1_name
+    else:
+        m.team2_points -= 1
+        fail_name = m.group2_name
+    uname = "لاعب"
+    for p in m.team1 + m.team2:
+        if p["user_id"] == user_id:
+            uname = p["name"]
+            break
     for gid in m.both_groups():
-        await send_to_group(m, gid, "انتهى وقت الخصم دون قرار.\n\nتم إجبار اللاعب على الإجابة تلقائيًا.", round_level=True)
-    await begin_answer_tournament(m, m.bidder)
+        await send_to_group(m, gid, "الخصم " + user_link(user_id, uname) + " تأخر في اتخاذ القرار.\n\n" + safe_str(fail_name, "") + " فقد روحًا.\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points), round_level=True)
+    if m.team1_points <= 0 or m.team2_points <= 0:
+        await finish_tournament(m)
+        return
+    await asyncio.sleep(1)
+    await advance_round_tournament(m)
 
 @client.on(events.CallbackQuery(pattern=r"^ready_int_(-?\d+)$"))
 @safe_execute
@@ -1380,9 +1414,31 @@ async def private_handler(event):
             asyncio.create_task(opponent_countdown(g, g.chat_id, opp, " لاتخاذ القرار"))
             g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, opp))
         elif sess["role"] == "opponent" and g.state == "opponent_choice":
-            if not text.isdigit():
-                return await event.reply("استخدم الأزرار لاتخاذ القرار.")
-            return await event.reply("استخدم الأزرار لاتخاذ القرار.")
+            if text.isdigit():
+                newbid = int(text)
+                if newbid > g.current_bid and newbid <= 50:
+                    g.current_bid = newbid
+                    old_bidder = g.bidder
+                    old_opponent = g.opponent
+                    g.bidder = old_opponent
+                    g.opponent = old_bidder
+                    private_sessions[g.bidder] = {"game_type": "internal", "chat_id": g.chat_id, "role": "bidder"}
+                    private_sessions[g.opponent] = {"game_type": "internal", "chat_id": g.chat_id, "role": "opponent"}
+                    try:
+                        if g.opponent_task:
+                            g.opponent_task.cancel()
+                    except Exception:
+                        pass
+                    kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_" + str(g.chat_id) + "_" + str(g.bidder)).encode())],
+                          [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
+                          [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
+                    await client.send_message(g.bidder, "تم رفع المزايدة إلى " + str(newbid) + ".\nهل تجبر الخصم؟ لديك 20 ثانية.", buttons=kb)
+                    await event.reply("تم رفع مزايدتك.")
+                    g.state = "opponent_choice"
+                    asyncio.create_task(opponent_countdown(g, g.chat_id, g.opponent, " لاتخاذ القرار"))
+                    g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, g.opponent))
+                    return
+            return await event.reply("أرسل رقمًا أعلى من " + str(g.current_bid) + "، أو استخدم الأزرار.")
         elif sess["role"] == "bidder" and g.state == "answering":
             g.answers.append(text)
 
@@ -1419,9 +1475,31 @@ async def private_handler(event):
             asyncio.create_task(opponent_countdown(m, m.group1_id, opp, " لاتخاذ القرار"))
             m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, opp))
         elif sess["role"] == "opponent" and m.state == "opponent_choice":
-            if not text.isdigit():
-                return await event.reply("استخدم الأزرار لاتخاذ القرار.")
-            return await event.reply("استخدم الأزرار لاتخاذ القرار.")
+            if text.isdigit():
+                newbid = int(text)
+                if newbid > m.current_bid and newbid <= 50:
+                    m.current_bid = newbid
+                    old_bidder = m.bidder
+                    old_opponent = m.opponent
+                    m.bidder = old_opponent
+                    m.opponent = old_bidder
+                    private_sessions[m.bidder] = {"game_type": "tournament", "match_id": m.match_id, "role": "bidder"}
+                    private_sessions[m.opponent] = {"game_type": "tournament", "match_id": m.match_id, "role": "opponent"}
+                    try:
+                        if m.opponent_task:
+                            m.opponent_task.cancel()
+                    except Exception:
+                        pass
+                    kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_t_" + str(m.match_id) + "_" + str(m.bidder)).encode())],
+                          [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
+                          [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
+                    await client.send_message(m.bidder, "تم رفع المزايدة إلى " + str(newbid) + ".\nهل تجبر الخصم؟ لديك 20 ثانية.", buttons=kb)
+                    await event.reply("تم رفع مزايدتك.")
+                    m.state = "opponent_choice"
+                    asyncio.create_task(opponent_countdown(m, m.group1_id, m.opponent, " لاتخاذ القرار"))
+                    m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, m.opponent))
+                    return
+            return await event.reply("أرسل رقمًا أعلى من " + str(m.current_bid) + "، أو استخدم الأزرار.")
         elif sess["role"] == "bidder" and m.state == "answering":
             m.answers.append(text)
 
@@ -2164,47 +2242,6 @@ async def cmd_list_subs(event):
     for s in subs:
         lines.append("- " + safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
     await event.reply("\n".join(lines))
-
-@client.on(events.NewMessage(pattern=r"^/top(?:@\S+)?$"))
-@safe_execute
-async def cmd_top(event):
-    if is_banned(event.chat_id):
-        return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
-    if not event.is_private:
-        if not await is_group_admin(event):
-            return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
-        if not await require_subscription(event):
-            return
-    gtop = get_top("group")
-    ptop = get_top("player")
-    msg = "لوحة المتصدرين\n\nأفضل الكروبات:\n"
-    for r in gtop:
-        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
-    msg += "\nأفضل اللاعبين:\n"
-    for r in ptop:
-        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
-    await event.reply(msg)
-
-@client.on(events.NewMessage(pattern=r"^/help(?:@\S+)?$"))
-@safe_execute
-async def cmd_help(event):
-    if not event.is_private:
-        if not await is_group_admin(event):
-            return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
-    text = (
-        "الأوامر المتاحة:\n\n"
-        "في المجموعات:\n"
-        "/start_game عدد - بدء تحدي داخلي\n"
-        "/end_game - إنهاء اللعبة (للمشرف)\n"
-        "/status - حالة اللعبة\n"
-        "/top - لوحة المتصدرين\n"
-        "/help - هذه القائمة\n\n"
-        "في الخاص:\n"
-        "/ai_play - اللعب ضد الذكاء الاصطناعي\n"
-        "/ai_stop - إيقاف اللعبة\n"
-        "/top - لوحة المتصدرين"
-    )
-    await event.reply(text)
 
 print("Bot is running...")
 client.run_until_disconnected()
