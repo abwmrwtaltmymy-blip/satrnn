@@ -863,6 +863,47 @@ async def join_timeout_internal(chat_id):
     except Exception:
         pass
 
+@client.on(events.NewMessage(pattern=r"^/top(?:@\S+)?$"))
+@safe_execute
+async def cmd_top(event):
+    if is_banned(event.chat_id):
+        return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+    if not event.is_private:
+        if not await is_group_admin(event):
+            return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
+        if not await require_subscription(event):
+            return
+    gtop = get_top("group")
+    ptop = get_top("player")
+    msg = "لوحة المتصدرين\n\nأفضل الكروبات:\n"
+    for r in gtop:
+        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
+    msg += "\nأفضل اللاعبين:\n"
+    for r in ptop:
+        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
+    await event.reply(msg)
+
+@client.on(events.NewMessage(pattern=r"^/help(?:@\S+)?$"))
+@safe_execute
+async def cmd_help(event):
+    if not event.is_private:
+        if not await is_group_admin(event):
+            return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
+    text = (
+        "الأوامر المتاحة:\n\n"
+        "في المجموعات:\n"
+        "/start_game عدد - بدء تحدي داخلي\n"
+        "/end_game - إنهاء اللعبة (للمشرف)\n"
+        "/status - حالة اللعبة\n"
+        "/top - لوحة المتصدرين\n"
+        "/help - هذه القائمة\n\n"
+        "في الخاص:\n"
+        "/ai_play - اللعب ضد الذكاء الاصطناعي\n"
+        "/ai_stop - إيقاف اللعبة\n"
+        "/top - لوحة المتصدرين"
+    )
+    await event.reply(text)
+
 async def bidding_countdown(game_obj, chat_id, user_id, label):
     checkpoints = [15, 10, 5, 3, 2, 1]
     prev = 20
