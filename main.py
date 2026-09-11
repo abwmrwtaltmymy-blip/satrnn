@@ -935,6 +935,8 @@ async def opponent_countdown(game_obj, chat_id, user_id, label):
             return
         if getattr(game_obj, "opponent", None) != user_id:
             return
+        if getattr(game_obj, "opponent_resolved", False):
+            return
         try:
             await client.send_message(user_id, "بقي " + str(cp) + " ثواني" + label)
         except Exception:
@@ -945,6 +947,9 @@ async def opponent_timeout_internal(g, user_id):
     await asyncio.sleep(20)
     if g.state != "opponent_choice" or g.opponent != user_id:
         return
+    if getattr(g, "opponent_resolved", False):
+        return
+    g.opponent_resolved = True
     if user_id in g.team1:
         g.team1_points -= 1
         fail_name = g.team1_label
@@ -963,6 +968,9 @@ async def opponent_timeout_tournament(m, user_id):
     await asyncio.sleep(20)
     if m.state != "opponent_choice" or m.opponent != user_id:
         return
+    if getattr(m, "opponent_resolved", False):
+        return
+    m.opponent_resolved = True
     if any(p["user_id"] == user_id for p in m.team1):
         m.team1_points -= 1
         fail_name = m.group1_name
@@ -1042,6 +1050,7 @@ async def start_round_internal(g):
     g.state = "bidding"
     g.current_bid = 0
     g.answers = []
+    g.opponent_resolved = False
     b, o, bteam = decide_bidder_teams(g)
     g.bidder = b
     g.opponent = o
@@ -1330,6 +1339,7 @@ async def start_round_tournament(m):
     m.question = get_question()
     m.current_bid = 0
     m.answers = []
+    m.opponent_resolved = False
     b, o, bteam = decide_bidder_tournament(m)
     m.bidder = b
     m.opponent = o
@@ -1487,7 +1497,7 @@ async def private_handler(event):
             return await event.reply("انتهت اللعبة.")
 
         is_current_bidder = (g.state == "bidding" and g.bidder == uid)
-        is_current_opponent = (g.state == "opponent_choice" and g.opponent == uid)
+        is_current_opponent = (g.state == "opponent_choice" and g.opponent == uid and not getattr(g, "opponent_resolved", False))
 
         if is_current_bidder:
             if not text.isdigit():
@@ -1503,6 +1513,7 @@ async def private_handler(event):
             except Exception:
                 pass
             g.state = "opponent_choice"
+            g.opponent_resolved = False
             opp = g.opponent
             bname = g._name_cache.get(uid, "لاعب") if hasattr(g, "_name_cache") else "لاعب"
             kb = [[Button.inline("إجباره على الإجابة " + str(bid), ("force_" + str(g.chat_id) + "_" + str(uid)).encode())],
@@ -1539,6 +1550,7 @@ async def private_handler(event):
             await client.send_message(g.opponent, "الخصم رفع المزايدة إلى " + str(newbid) + ".\nهل تجبره على الإجابة، أو تزايد برقم أعلى؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم رفع مزايدتك إلى " + str(newbid) + ".")
             g.state = "opponent_choice"
+            g.opponent_resolved = False
             asyncio.create_task(opponent_countdown(g, g.chat_id, g.opponent, " لاتخاذ القرار"))
             g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, g.opponent))
 
@@ -1554,7 +1566,7 @@ async def private_handler(event):
             return await event.reply("انتهى التحدي.")
 
         is_current_bidder = (m.state == "bidding" and m.bidder == uid)
-        is_current_opponent = (m.state == "opponent_choice" and m.opponent == uid)
+        is_current_opponent = (m.state == "opponent_choice" and m.opponent == uid and not getattr(m, "opponent_resolved", False))
 
         if is_current_bidder:
             if not text.isdigit():
@@ -1570,6 +1582,7 @@ async def private_handler(event):
             except Exception:
                 pass
             m.state = "opponent_choice"
+            m.opponent_resolved = False
             opp = m.opponent
             bname = "لاعب"
             for p in m.team1 + m.team2:
@@ -1610,6 +1623,7 @@ async def private_handler(event):
             await client.send_message(m.opponent, "الخصم رفع المزايدة إلى " + str(newbid) + ".\nهل تجبره على الإجابة، أو تزايد برقم أعلى؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم رفع مزايدتك إلى " + str(newbid) + ".")
             m.state = "opponent_choice"
+            m.opponent_resolved = False
             asyncio.create_task(opponent_countdown(m, m.group1_id, m.opponent, " لاتخاذ القرار"))
             m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, m.opponent))
 
@@ -1629,10 +1643,13 @@ async def cb_force_internal(event):
         return await event.answer("انتهت اللعبة.", alert=True)
     if g.state != "opponent_choice":
         return await event.answer("الوقت انتهى أو تم اتخاذ القرار.", alert=True)
+    if getattr(g, "opponent_resolved", False):
+        return await event.answer("انتهى وقت القرار.", alert=True)
     if g.opponent != uid:
         return await event.answer("هذا الزر ليس لك.", alert=True)
     if g.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
+    g.opponent_resolved = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
         if hasattr(g, "opponent_task") and g.opponent_task:
@@ -1721,10 +1738,13 @@ async def cb_force_t(event):
         return await event.answer("انتهى التحدي.", alert=True)
     if m.state != "opponent_choice":
         return await event.answer("الوقت انتهى أو تم اتخاذ القرار.", alert=True)
+    if getattr(m, "opponent_resolved", False):
+        return await event.answer("انتهى وقت القرار.", alert=True)
     if m.opponent != uid:
         return await event.answer("هذا الزر ليس لك.", alert=True)
     if m.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
+    m.opponent_resolved = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
         if hasattr(m, "opponent_task") and m.opponent_task:
