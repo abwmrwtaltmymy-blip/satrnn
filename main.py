@@ -1310,8 +1310,6 @@ def decide_bidder_tournament(m):
         first_team = m.first_bidder_team
     else:
         first_team = 2 if m.first_bidder_team == 1 else 1
-    team1_ids = [p["user_id"] for p in m.team1]
-    team2_ids = [p["user_id"] for p in m.team2]
     if first_team == 1:
         b = pick_next_player(m, 1)
         o = pick_next_player(m, 2)
@@ -1619,6 +1617,197 @@ async def private_handler(event):
             m.answers.append(text)
         else:
             return
+
+@client.on(events.CallbackQuery(pattern=r"^force_(-?\d+)_(\d+)$"))
+@safe_execute
+async def cb_force_internal(event):
+    chat_id = int(event.pattern_match.group(1))
+    bidder = int(event.pattern_match.group(2))
+    uid = event.sender_id
+    g = internal_games.get(chat_id)
+    if not g:
+        return await event.answer("انتهت اللعبة.", alert=True)
+    if g.state != "opponent_choice":
+        return await event.answer("الوقت انتهى أو تم اتخاذ القرار.", alert=True)
+    if g.opponent != uid:
+        return await event.answer("هذا الزر ليس لك.", alert=True)
+    if g.current_bid < 1:
+        return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
+    await event.answer("تم إجبار الخصم على الإجابة.")
+    try:
+        if hasattr(g, "opponent_task") and g.opponent_task:
+            g.opponent_task.cancel()
+    except Exception:
+        pass
+    await send_to_group(g, g.chat_id, "تم إجبار اللاعب على الإجابة بالرقم " + str(g.current_bid) + ".", round_level=True)
+    await begin_answer_internal(g, g.bidder)
+
+async def begin_answer_internal(g, bidder):
+    if g.current_bid < 1:
+        return
+    g.state = "answering"
+    g.answers = []
+    kb = [[Button.inline("أنهيت الإجابة", ("finish_int_" + str(g.chat_id)).encode())],
+          [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
+          [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
+    asyncio.create_task(answer_countdown(g, g.chat_id, bidder, " للإجابة"))
+
+async def answer_timeout_internal(g, bidder):
+    await asyncio.sleep(30)
+    if g.state == "answering" and g.bidder == bidder:
+        await evaluate_internal(g, bidder)
+
+@client.on(events.CallbackQuery(pattern=r"^finish_int_(-?\d+)$"))
+@safe_execute
+async def cb_finish_internal(event):
+    chat_id = int(event.pattern_match.group(1))
+    g = internal_games.get(chat_id)
+    if not g or g.state != "answering":
+        return await event.answer("لا توجد إجابات قيد الانتظار.", alert=True)
+    await event.answer("جاري التقييم.")
+    try:
+        if g.answer_task:
+            g.answer_task.cancel()
+    except Exception:
+        pass
+    await evaluate_internal(g, g.bidder)
+
+async def evaluate_internal(g, bidder):
+    g.state = "evaluating"
+    ok, reason = await evaluate_answers_with_ai(g.question, g.current_bid, g.answers)
+    try:
+        bn = clean_name((await client.get_entity(bidder)).first_name)
+    except Exception:
+        bn = "لاعب"
+    team = 1 if bidder in g.team1 else 2
+    if ok:
+        if team == 1:
+            g.team2_points -= 1
+            target_name = g.team2_label
+        else:
+            g.team1_points -= 1
+            target_name = g.team1_label
+        add_points(bidder, "player", 10, bn)
+        result_line = "نجاح اللاعب " + user_link(bidder, bn) + "\n" + reason + "\n\n" + target_name + " فقد روحًا."
+    else:
+        if team == 1:
+            g.team1_points -= 1
+        else:
+            g.team2_points -= 1
+        add_points(bidder, "player", -20, bn)
+        result_line = "فشل اللاعب " + user_link(bidder, bn) + "\n" + reason
+    text = result_line + "\n\nأرواح " + g.team1_label + ": " + str(g.team1_points) + "\nأرواح " + g.team2_label + ": " + str(g.team2_points)
+    await send_to_group(g, g.chat_id, text, round_level=True)
+    try:
+        await client.send_message(bidder, text)
+    except Exception:
+        pass
+    await asyncio.sleep(1)
+    if g.team1_points <= 0 or g.team2_points <= 0:
+        await finish_internal(g)
+        return
+    await advance_round_internal(g)
+
+@client.on(events.CallbackQuery(pattern=r"^force_t_(\d+)_(\d+)$"))
+@safe_execute
+async def cb_force_t(event):
+    mid = int(event.pattern_match.group(1))
+    bidder = int(event.pattern_match.group(2))
+    uid = event.sender_id
+    m = tournaments.get(mid)
+    if not m:
+        return await event.answer("انتهى التحدي.", alert=True)
+    if m.state != "opponent_choice":
+        return await event.answer("الوقت انتهى أو تم اتخاذ القرار.", alert=True)
+    if m.opponent != uid:
+        return await event.answer("هذا الزر ليس لك.", alert=True)
+    if m.current_bid < 1:
+        return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
+    await event.answer("تم إجبار الخصم على الإجابة.")
+    try:
+        if hasattr(m, "opponent_task") and m.opponent_task:
+            m.opponent_task.cancel()
+    except Exception:
+        pass
+    for gid in m.both_groups():
+        await send_to_group(m, gid, "تم إجبار اللاعب على الإجابة بالرقم " + str(m.current_bid) + ".", round_level=True)
+    await begin_answer_tournament(m, m.bidder)
+
+async def begin_answer_tournament(m, bidder):
+    if m.current_bid < 1:
+        return
+    m.state = "answering"
+    m.answers = []
+    kb = [[Button.inline("أنهيت الإجابة", ("finish_t_" + str(m.match_id)).encode())],
+          [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
+          [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
+    asyncio.create_task(answer_countdown(m, m.group1_id, bidder, " للإجابة"))
+
+async def answer_timeout_tournament(m, bidder):
+    await asyncio.sleep(30)
+    if m.state == "answering" and m.bidder == bidder:
+        await evaluate_tournament(m, bidder)
+
+@client.on(events.CallbackQuery(pattern=r"^finish_t_(\d+)$"))
+@safe_execute
+async def cb_finish_t(event):
+    mid = int(event.pattern_match.group(1))
+    m = tournaments.get(mid)
+    if not m or m.state != "answering":
+        return await event.answer("لا توجد إجابات.", alert=True)
+    await event.answer("جاري التقييم.")
+    try:
+        if m.answer_task:
+            m.answer_task.cancel()
+    except Exception:
+        pass
+    await evaluate_tournament(m, m.bidder)
+
+async def evaluate_tournament(m, bidder):
+    m.state = "evaluating"
+    ok, reason = await evaluate_answers_with_ai(m.question, m.current_bid, m.answers)
+    team1_ids = [p["user_id"] for p in m.team1]
+    team = 1 if bidder in team1_ids else 2
+    bname = "لاعب"
+    for p in m.team1 + m.team2:
+        if p["user_id"] == bidder:
+            bname = p["name"]
+            break
+    if ok:
+        if team == 1:
+            m.team2_points -= 1
+            target_name = m.group2_name
+        else:
+            m.team1_points -= 1
+            target_name = m.group1_name
+        add_points(bidder, "player", 10, bname)
+        result_line = "نجاح اللاعب " + user_link(bidder, bname) + "\n" + reason + "\n\n" + safe_str(target_name, "") + " فقد روحًا."
+    else:
+        if team == 1:
+            m.team1_points -= 1
+        else:
+            m.team2_points -= 1
+        add_points(bidder, "player", -20, bname)
+        result_line = "فشل اللاعب " + user_link(bidder, bname) + "\n" + reason
+    for gid in m.both_groups():
+        text = result_line + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
+        await send_to_group(m, gid, text, round_level=True)
+    private_text = (result_line + "\n\n" +
+                    "أرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n" +
+                    "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+    try:
+        await client.send_message(bidder, private_text)
+    except Exception:
+        pass
+    await asyncio.sleep(1)
+    if m.team1_points <= 0 or m.team2_points <= 0:
+        await finish_tournament(m)
+        return
+    await advance_round_tournament(m)
 
 @client.on(events.CallbackQuery(data=b"dev_notif_on"))
 @safe_execute
@@ -1956,191 +2145,6 @@ async def cb_wd_match_tournament(event):
     else:
         m.team2_points = 0
     await finish_tournament(m)
-
-@client.on(events.CallbackQuery(pattern=r"^force_(-?\d+)_(\d+)$"))
-@safe_execute
-async def cb_force_internal(event):
-    chat_id = int(event.pattern_match.group(1))
-    bidder = int(event.pattern_match.group(2))
-    g = internal_games.get(chat_id)
-    if not g or g.bidder != bidder:
-        return await event.answer("انتهى الوقت.", alert=True)
-    if g.current_bid < 1:
-        return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
-    if g.state != "opponent_choice":
-        return await event.answer("تم اتخاذ القرار مسبقًا.", alert=True)
-    await event.answer("تم إجبار الخصم على الإجابة.")
-    try:
-        if hasattr(g, "opponent_task") and g.opponent_task:
-            g.opponent_task.cancel()
-    except Exception:
-        pass
-    await send_to_group(g, g.chat_id, "تم إجبار اللاعب على الإجابة بالرقم " + str(g.current_bid) + ".", round_level=True)
-    await begin_answer_internal(g, bidder)
-
-async def begin_answer_internal(g, bidder):
-    if g.current_bid < 1:
-        return
-    g.state = "answering"
-    g.answers = []
-    kb = [[Button.inline("أنهيت الإجابة", ("finish_int_" + str(g.chat_id)).encode())],
-          [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
-          [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
-    g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
-    asyncio.create_task(answer_countdown(g, g.chat_id, bidder, " للإجابة"))
-
-async def answer_timeout_internal(g, bidder):
-    await asyncio.sleep(30)
-    if g.state == "answering" and g.bidder == bidder:
-        await evaluate_internal(g, bidder)
-
-@client.on(events.CallbackQuery(pattern=r"^finish_int_(-?\d+)$"))
-@safe_execute
-async def cb_finish_internal(event):
-    chat_id = int(event.pattern_match.group(1))
-    g = internal_games.get(chat_id)
-    if not g or g.state != "answering":
-        return await event.answer("لا توجد إجابات قيد الانتظار.", alert=True)
-    await event.answer("جاري التقييم.")
-    try:
-        if g.answer_task:
-            g.answer_task.cancel()
-    except Exception:
-        pass
-    await evaluate_internal(g, g.bidder)
-
-async def evaluate_internal(g, bidder):
-    g.state = "evaluating"
-    ok, reason = await evaluate_answers_with_ai(g.question, g.current_bid, g.answers)
-    try:
-        bn = clean_name((await client.get_entity(bidder)).first_name)
-    except Exception:
-        bn = "لاعب"
-    team = 1 if bidder in g.team1 else 2
-    if ok:
-        if team == 1:
-            g.team2_points -= 1
-            target_name = g.team2_label
-        else:
-            g.team1_points -= 1
-            target_name = g.team1_label
-        add_points(bidder, "player", 10, bn)
-        result_line = "نجاح اللاعب " + user_link(bidder, bn) + "\n" + reason + "\n\n" + target_name + " فقد روحًا."
-    else:
-        if team == 1:
-            g.team1_points -= 1
-        else:
-            g.team2_points -= 1
-        add_points(bidder, "player", -20, bn)
-        result_line = "فشل اللاعب " + user_link(bidder, bn) + "\n" + reason
-    text = result_line + "\n\nأرواح " + g.team1_label + ": " + str(g.team1_points) + "\nأرواح " + g.team2_label + ": " + str(g.team2_points)
-    await send_to_group(g, g.chat_id, text, round_level=True)
-    try:
-        await client.send_message(bidder, text)
-    except Exception:
-        pass
-    await asyncio.sleep(1)
-    if g.team1_points <= 0 or g.team2_points <= 0:
-        await finish_internal(g)
-        return
-    await advance_round_internal(g)
-
-@client.on(events.CallbackQuery(pattern=r"^force_t_(\d+)_(\d+)$"))
-@safe_execute
-async def cb_force_t(event):
-    mid = int(event.pattern_match.group(1))
-    bidder = int(event.pattern_match.group(2))
-    m = tournaments.get(mid)
-    if not m or m.bidder != bidder:
-        return await event.answer("انتهى الوقت.", alert=True)
-    if m.current_bid < 1:
-        return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
-    if m.state != "opponent_choice":
-        return await event.answer("تم اتخاذ القرار مسبقًا.", alert=True)
-    await event.answer("تم إجبار الخصم على الإجابة.")
-    try:
-        if hasattr(m, "opponent_task") and m.opponent_task:
-            m.opponent_task.cancel()
-    except Exception:
-        pass
-    for gid in m.both_groups():
-        await send_to_group(m, gid, "تم إجبار اللاعب على الإجابة بالرقم " + str(m.current_bid) + ".", round_level=True)
-    await begin_answer_tournament(m, bidder)
-
-async def begin_answer_tournament(m, bidder):
-    if m.current_bid < 1:
-        return
-    m.state = "answering"
-    m.answers = []
-    kb = [[Button.inline("أنهيت الإجابة", ("finish_t_" + str(m.match_id)).encode())],
-          [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
-          [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
-    m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
-    asyncio.create_task(answer_countdown(m, m.group1_id, bidder, " للإجابة"))
-
-async def answer_timeout_tournament(m, bidder):
-    await asyncio.sleep(30)
-    if m.state == "answering" and m.bidder == bidder:
-        await evaluate_tournament(m, bidder)
-
-@client.on(events.CallbackQuery(pattern=r"^finish_t_(\d+)$"))
-@safe_execute
-async def cb_finish_t(event):
-    mid = int(event.pattern_match.group(1))
-    m = tournaments.get(mid)
-    if not m or m.state != "answering":
-        return await event.answer("لا توجد إجابات.", alert=True)
-    await event.answer("جاري التقييم.")
-    try:
-        if m.answer_task:
-            m.answer_task.cancel()
-    except Exception:
-        pass
-    await evaluate_tournament(m, m.bidder)
-
-async def evaluate_tournament(m, bidder):
-    m.state = "evaluating"
-    ok, reason = await evaluate_answers_with_ai(m.question, m.current_bid, m.answers)
-    team1_ids = [p["user_id"] for p in m.team1]
-    team = 1 if bidder in team1_ids else 2
-    bname = "لاعب"
-    for p in m.team1 + m.team2:
-        if p["user_id"] == bidder:
-            bname = p["name"]
-            break
-    if ok:
-        if team == 1:
-            m.team2_points -= 1
-            target_name = m.group2_name
-        else:
-            m.team1_points -= 1
-            target_name = m.group1_name
-        add_points(bidder, "player", 10, bname)
-        result_line = "نجاح اللاعب " + user_link(bidder, bname) + "\n" + reason + "\n\n" + safe_str(target_name, "") + " فقد روحًا."
-    else:
-        if team == 1:
-            m.team1_points -= 1
-        else:
-            m.team2_points -= 1
-        add_points(bidder, "player", -20, bname)
-        result_line = "فشل اللاعب " + user_link(bidder, bname) + "\n" + reason
-    for gid in m.both_groups():
-        text = result_line + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
-        await send_to_group(m, gid, text, round_level=True)
-    private_text = (result_line + "\n\n" +
-                    "أرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\n" +
-                    "أرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
-    try:
-        await client.send_message(bidder, private_text)
-    except Exception:
-        pass
-    await asyncio.sleep(1)
-    if m.team1_points <= 0 or m.team2_points <= 0:
-        await finish_tournament(m)
-        return
-    await advance_round_tournament(m)
 
 @client.on(events.NewMessage(pattern=r"^/status(?:@\S+)?$"))
 @safe_execute
