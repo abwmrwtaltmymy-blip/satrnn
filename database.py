@@ -7,6 +7,9 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+conn.commit()
+
 def init_db():
     conn = get_connection()
     c = conn.cursor()
