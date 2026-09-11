@@ -357,6 +357,38 @@ async def cmd_start(event):
         return
     await send_main_menu(event.chat_id)
 
+@client.on(events.NewMessage(pattern=r"^@(\S+)$"))
+@safe_execute
+async def on_bot_mention(event):
+    me = await client.get_me()
+    my_username = (me.username or "").lower()
+    if not my_username:
+        return
+    mentioned = safe_str(event.pattern_match.group(1), "").lower().lstrip("@")
+    if mentioned != my_username:
+        return
+    if is_banned(event.chat_id):
+        return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+    text = (
+        "بوت تحدي الثلاثين ثانية\n\n"
+        "بوت عربي لتنظيم تحديات سريعة داخل الكروبات.\n\n"
+        "أبرز الميزات:\n"
+        "- تحديات بين فريقين بأي عدد لاعبين\n"
+        "- تحديات بين كروبين مع ترشيح وتصويت\n"
+        "- نظام مزايدة وإجابات في الخاص\n"
+        "- تقييم الإجابات تلقائيًا\n"
+        "- لوحة متصدرين للأفضل\n\n"
+        "اضغط الزر لفتح البوت والبدء."
+    )
+    kb = [
+        [Button.url("افتح البوت في الخاص", "https://t.me/" + me.username)],
+        [Button.url("أضف البوت لمجموعتك", "https://t.me/" + me.username + "?startgroup=admin")],
+    ]
+    try:
+        await event.reply(text, buttons=kb)
+    except Exception:
+        pass
+
 @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
 async def cmd_start_game(event):
