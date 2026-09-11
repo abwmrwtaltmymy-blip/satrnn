@@ -1,5 +1,4 @@
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import MessageEntityTextUrl
 import asyncio
 import time
 import random
@@ -25,7 +24,6 @@ TEAM_NAMES = [
   ("فريق المحتوى الهادف", " فريق الشتبوستريه"),
     ("فريق الواعيين", "فريق الترولرية"), 
 ]
-
 def user_link(user_id, name):
     return "[" + name + "](tg://user?id=" + str(user_id) + ")"
 
@@ -153,27 +151,6 @@ async def strip_buttons(game_obj):
         except Exception:
             pass
 
-async def get_member_names(g, team_ids):
-    names = []
-    for uid in team_ids:
-        try:
-            ent = await client.get_entity(uid)
-            n = clean_name(ent.first_name)
-        except Exception:
-            n = "لاعب"
-        names.append({"id": uid, "name": n})
-    return names
-
-def format_team(g, team_ids, team_label):
-    parts = []
-    for uid in team_ids:
-        try:
-            ent_name = g._name_cache.get(uid, "لاعب")
-        except Exception:
-            ent_name = "لاعب"
-        parts.append(user_link(uid, ent_name))
-    return team_label + ": " + " ، ".join(parts)
-
 async def cache_names(g, team1, team2):
     if not hasattr(g, "_name_cache") or g._name_cache is None:
         g._name_cache = {}
@@ -198,14 +175,6 @@ def team_display(g, which):
         name = g._name_cache.get(uid, "لاعب") if hasattr(g, "_name_cache") else "لاعب"
         parts.append(user_link(uid, name))
     return label + ": " + " ، ".join(parts)
-
-def team_label_only(g, which):
-    return g.team1_label if which == 1 else g.team2_label
-
-def player_label(g, uid):
-    if hasattr(g, "_name_cache") and uid in g._name_cache:
-        return user_link(uid, g._name_cache[uid])
-    return user_link(uid, "لاعب")
 
 async def send_main_menu(chat_id):
     u = await bot_username()
@@ -357,15 +326,22 @@ async def cmd_start(event):
         return
     await send_main_menu(event.chat_id)
 
-@client.on(events.NewMessage(pattern=r"^@(\S+)$"))
+@client.on(events.NewMessage(pattern=r"^@(\S+)"))
 @safe_execute
 async def on_bot_mention(event):
     me = await client.get_me()
     my_username = (me.username or "").lower()
     if not my_username:
         return
-    mentioned = safe_str(event.pattern_match.group(1), "").lower().lstrip("@")
-    if mentioned != my_username:
+    full_text = safe_str(event.text, "")
+    mentioned = None
+    for word in full_text.split():
+        if word.startswith("@"):
+            mentioned = word[1:].lower().strip()
+            break
+    if mentioned is None or mentioned != my_username:
+        return
+    if event.is_private:
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
@@ -378,16 +354,43 @@ async def on_bot_mention(event):
         "- نظام مزايدة وإجابات في الخاص\n"
         "- تقييم الإجابات تلقائيًا\n"
         "- لوحة متصدرين للأفضل\n\n"
-        "اضغط الزر لفتح البوت والبدء."
+        "اضغط الزر لعرض التفاصيل."
     )
-    kb = [
-        [Button.url("افتح البوت في الخاص", "https://t.me/" + me.username)],
-        [Button.url("أضف البوت لمجموعتك", "https://t.me/" + me.username + "?startgroup=admin")],
-    ]
+    kb = [[Button.inline("عرض التفاصيل", b"promo_info")]]
     try:
         await event.reply(text, buttons=kb)
     except Exception:
         pass
+
+@client.on(events.CallbackQuery(data=b"promo_info"))
+@safe_execute
+async def cb_promo_info(event):
+    await event.answer()
+    me = await client.get_me()
+    u = me.username or ""
+    text = (
+        "بوت تحدي الثلاثين ثانية\n\n"
+        "كيف يعمل البوت:\n\n"
+        "1) بدء مبارة مع مجموعة أخرى:\n"
+        "يفتح باب الترشيح والتصويت في كروبكم. البوت يختار أعلى المرشحين بالتصويت، ويطابقكم مع كروب آخر في قائمة الانتظار.\n\n"
+        "2) بدء مبارة داخل الكروب:\n"
+        "يحدد قائد التحدي عدد اللاعبين لكل فريق، ثم يفتح زر الانضمام للأعضاء. عند اكتمال العدد يبدأ التحدي.\n\n"
+        "3) نظام المزايدة:\n"
+        "المزايد يستلم سؤالًا في الخاص ويحدد رقمًا. الخصم يقدر يجبره على الإجابة. المجيب لديه ثلاثون ثانية.\n\n"
+        "4) التقييم:\n"
+        "الإجابات تُقيَّم تلقائيًا. كل فريق عنده 3 أرواح، أول من يفقدها يخسر.\n\n"
+        "5) لوحة المتصدرين:\n"
+        "يتم احتساب نقاط الكروبات واللاعبين. استعمل /top لرؤية الأفضل.\n\n"
+        "أضف البوت إلى مجموعتك وابدأ اللعب."
+    )
+    kb = [
+        [Button.url("افتح البوت في الخاص", "https://t.me/" + u)],
+        [Button.url("أضف البوت لمجموعتك", "https://t.me/" + u + "?startgroup=admin")],
+    ]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
 
 @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
