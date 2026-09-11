@@ -231,6 +231,9 @@ def _normalize_ar(s):
     s = re.sub(r"[\u064B-\u0652]", "", s)
     s = re.sub(r"\s+", " ", s)
     s = s.strip()
+    if s.startswith("ال") and len(s) > 3:
+        s = s[2:]
+    s = s.strip()
     return s
 
 def _levenshtein(a, b):
@@ -263,6 +266,34 @@ def _allowed_errors(word):
         return 2
     return 3
 
+def _word_match(answer_norm, bank_norm):
+    a_words = answer_norm.split()
+    b_words = bank_norm.split()
+    if len(b_words) == 1 and len(b_words[0]) >= 4:
+        for aw in a_words:
+            if aw == b_words[0]:
+                return True
+            allowed = _allowed_errors(b_words[0])
+            if allowed > 0 and abs(len(aw) - len(b_words[0])) <= allowed:
+                if _levenshtein(aw, b_words[0]) <= allowed:
+                    return True
+        return False
+    if len(a_words) == len(b_words):
+        total_diff = 0
+        for wa, wb in zip(a_words, b_words):
+            allowed_w = _allowed_errors(wb)
+            d = _levenshtein(wa, wb)
+            if d > allowed_w:
+                return False
+            total_diff += d
+        return total_diff <= 2
+    if len(b_words) > 1:
+        b_joined = " ".join(b_words)
+        for aw in a_words:
+            if len(aw) >= 4 and aw in b_joined:
+                return True
+    return False
+
 def _fuzzy_match(answer_norm, bank_norm):
     if not answer_norm or not bank_norm:
         return False
@@ -276,20 +307,8 @@ def _fuzzy_match(answer_norm, bank_norm):
         if abs(len(answer_norm) - len(bank_norm)) <= allowed:
             if _levenshtein(answer_norm, bank_norm) <= allowed:
                 return True
-    if " " in bank_norm or " " in answer_norm:
-        a_words = answer_norm.split()
-        b_words = bank_norm.split()
-        if len(a_words) == len(b_words):
-            total_diff = 0
-            for wa, wb in zip(a_words, b_words):
-                allowed_w = _allowed_errors(wb)
-                d = _levenshtein(wa, wb)
-                if d > allowed_w:
-                    total_diff = 999
-                    break
-                total_diff += d
-            if total_diff <= 2:
-                return True
+    if _word_match(answer_norm, bank_norm):
+        return True
     return False
 
 def _check_against_bank(question, answers_list):
@@ -382,7 +401,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         return False, "عدد الإجابات الصحيحة " + str(total_correct) + " أقل من المطلوب " + str(expected_count) + "." + extra
 
     if not _init_gemini():
-        return False, "تعذر التقييم. حاول مرة أخرى."
+        return _local_fallback_check(expected_count, uniq)
 
     prompt = (
         "قيّم إجابات لاعب في تحدي سريع.\n\n"
@@ -401,17 +420,17 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
     )
     text = await _gemini_generate(prompt)
     if not text:
-        return False, "تعذر تقييم الإجابات. حاول مرة أخرى."
+        return _local_fallback_check(expected_count, uniq)
     data = _parse_gemini_json(text)
     if data is None:
-        return False, "تعذر قراءة تقييم الذكاء الاصطناعي."
+        return _local_fallback_check(expected_count, uniq)
     correct = _to_bool(data.get("correct"))
     count_raw = data.get("count")
     reason = safe_str(data.get("reason"), "")
     try:
-        count_int = int(count_raw) if count_raw is not None else 0
+        count_int = int(count_raw) if count_raw is not None else len(uniq)
     except Exception:
-        count_int = 0
+        count_int = len(uniq)
     if count_int < expected_count:
         correct = False
     if correct:
@@ -467,7 +486,7 @@ async def ai_generate_bid(question, difficulty="medium"):
     low, high = ranges.get(difficulty, (5, 9))
     prompt = (
         "أنت لاعب عربي في تحدي ألعاب.\n"
-        "السؤال: " + question + ".\n"
+        "السؤال: اذكر أكبر عدد من " + question + ".\n"
         "أعد رقمًا فقط بين " + str(low) + " و " + str(high) + ". لا تكتب أي نص آخر."
     )
     text = await _gemini_generate(prompt)
