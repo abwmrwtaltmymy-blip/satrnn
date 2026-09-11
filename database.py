@@ -133,3 +133,20 @@ def get_stats():
     u = c.fetchone()["c"]
     conn.close()
     return {"groups": g, "players": p, "banned": b, "subs": s, "users": u}
+
+
+def get_setting(key, default=None):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = c.fetchone()
+    conn.close()
+    if row is None:
+        return default
+    return row["value"]
+
+def set_setting(key, value):
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+    conn.close()
