@@ -18,6 +18,11 @@ def new_match_id():
 def get_question():
     return random.choice(QUESTIONS)
 
+def initial_lives(team_size):
+    if team_size <= 2:
+        return 3
+    return team_size
+
 class InternalGame:
     def __init__(self, chat_id, chat_name, team_size):
         self.chat_id = chat_id
@@ -28,8 +33,9 @@ class InternalGame:
         self.names = []
         self.team1 = []
         self.team2 = []
-        self.team1_points = 3
-        self.team2_points = 3
+        self.lives = initial_lives(team_size)
+        self.team1_points = self.lives
+        self.team2_points = self.lives
         self.round = 1
         self.state = "waiting"
         self.question = None
@@ -48,6 +54,9 @@ class InternalGame:
         self._name_cache = {}
         self.team1_label = ""
         self.team2_label = ""
+        self.team1_played = []
+        self.team2_played = []
+        self.first_bidder_team = 1
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -67,8 +76,9 @@ class Tournament:
         self.candidates = {group1_id: {}, group2_id: {}}
         self.team1 = []
         self.team2 = []
-        self.team1_points = 3
-        self.team2_points = 3
+        self.lives = initial_lives(squad)
+        self.team1_points = self.lives
+        self.team2_points = self.lives
         self.round = 1
         self.question = None
         self.bidder = None
@@ -83,6 +93,9 @@ class Tournament:
         self.round_messages = []
         self.pin_msg_id = None
         self.consecutive_timeouts = 0
+        self.team1_played = []
+        self.team2_played = []
+        self.first_bidder_team = 1
 
     def resolve_top(self, gid):
         lst = []
