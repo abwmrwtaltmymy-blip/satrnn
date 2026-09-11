@@ -13,6 +13,10 @@ from utils import (safe_execute, clean_name, name_has_bad_word, require_subscrip
 from game_manager import (internal_games, tournaments, private_sessions, matchmaking_pool,
                           InternalGame, Tournament, get_question)
 
+from telethon import TelegramClient, events, Button
+from telethon.tl.types import InputWebDocument, InputBotInlineMessageText, InputBotInlineResult
+from telethon.events.inlinequery import InlineQuery
+
 init_db()
 
 client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
@@ -326,25 +330,10 @@ async def cmd_start(event):
         return
     await send_main_menu(event.chat_id)
 
-@client.on(events.NewMessage(pattern=r"^@(\S+)"))
+@client.on(events.InlineQuery)
 @safe_execute
-async def on_bot_mention(event):
-    me = await client.get_me()
-    my_username = (me.username or "").lower()
-    if not my_username:
-        return
-    full_text = safe_str(event.text, "")
-    mentioned = None
-    for word in full_text.split():
-        if word.startswith("@"):
-            mentioned = word[1:].lower().strip()
-            break
-    if mentioned is None or mentioned != my_username:
-        return
-    if event.is_private:
-        return
-    if is_banned(event.chat_id):
-        return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+async def inline_handler(event):
+    builder = event.builder
     text = (
         "بوت تحدي الثلاثين ثانية\n\n"
         "بوت عربي لتنظيم تحديات سريعة داخل الكروبات.\n\n"
@@ -354,13 +343,20 @@ async def on_bot_mention(event):
         "- نظام مزايدة وإجابات في الخاص\n"
         "- تقييم الإجابات تلقائيًا\n"
         "- لوحة متصدرين للأفضل\n\n"
-        "اضغط الزر لعرض التفاصيل."
+        "اضغط على الزر لعرض التفاصيل."
     )
-    kb = [[Button.inline("عرض التفاصيل", b"promo_info")]]
-    try:
-        await event.reply(text, buttons=kb)
-    except Exception:
-        pass
+    me = await client.get_me()
+    results = [
+        builder.article(
+            title="شرح بوت تحدي الثلاثين ثانية",
+            description="اضغط لعرض ميزات البوت",
+            text=text,
+            buttons=[
+                [Button.inline("عرض التفاصيل", b"promo_info")],
+            ],
+        ),
+    ]
+    await event.answer(results, cache_time=0)
 
 @client.on(events.CallbackQuery(data=b"promo_info"))
 @safe_execute
