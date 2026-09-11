@@ -7,9 +7,6 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-conn.commit()
-
 def init_db():
     conn = get_connection()
     c = conn.cursor()
@@ -18,6 +15,7 @@ def init_db():
     c.execute("CREATE TABLE IF NOT EXISTS banned_groups (chat_id INTEGER PRIMARY KEY)")
     c.execute("CREATE TABLE IF NOT EXISTS force_subs (channel_id INTEGER PRIMARY KEY, username TEXT, is_request_mode INTEGER DEFAULT 0)")
     c.execute("CREATE TABLE IF NOT EXISTS all_users (user_id INTEGER PRIMARY KEY, name TEXT)")
+    c.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
     conn.commit()
     conn.close()
 
@@ -134,7 +132,6 @@ def get_stats():
     conn.close()
     return {"groups": g, "players": p, "banned": b, "subs": s, "users": u}
 
-
 def get_setting(key, default=None):
     conn = get_connection()
     c = conn.cursor()
@@ -150,3 +147,5 @@ def set_setting(key, value):
     conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
     conn.close()
+
+init_db()
