@@ -9,7 +9,7 @@ from database import (init_db, add_points, get_top, is_banned, ban_group, unban_
                       get_all_groups, get_all_users, register_user, update_win_loss,
                       get_setting, set_setting)
 from utils import (safe_execute, clean_name, name_has_bad_word, require_subscription,
-                   evaluate_answers_with_ai, translate_error,
+                   evaluate_answers_with_ai, evaluate_winner_points, translate_error,
                    ai_generate_answers, ai_generate_bid, safe_str)
 from game_manager import (internal_games, tournaments, private_sessions, matchmaking_pool,
                           InternalGame, Tournament, get_question)
@@ -70,6 +70,10 @@ async def cancel_tasks(game_obj):
                 t.cancel()
             except Exception:
                 pass
+    try:
+        await asyncio.sleep(0)
+    except Exception:
+        pass
 
 async def send_to_group(game_obj, chat_id, text, buttons=None, round_level=False):
     try:
@@ -84,7 +88,7 @@ async def send_to_group(game_obj, chat_id, text, buttons=None, round_level=False
             if not hasattr(game_obj, "round_messages") or game_obj.round_messages is None:
                 game_obj.round_messages = []
             game_obj.round_messages.append((chat_id, msg.id))
-    await asyncio.sleep(0.6)
+    await asyncio.sleep(0.2)
     return msg
 
 async def delete_round_messages(game_obj):
@@ -103,12 +107,12 @@ async def delete_round_messages(game_obj):
             batch = unique_ids[i:i + 100]
             try:
                 await client.delete_messages(chat_id, batch)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.2)
             except Exception:
                 for mid in batch:
                     try:
                         await client.delete_messages(chat_id, mid)
-                        await asyncio.sleep(0.15)
+                        await asyncio.sleep(0.1)
                     except Exception:
                         pass
 
@@ -150,12 +154,12 @@ async def delete_tracked(game_obj):
             batch = unique_ids[i:i + 100]
             try:
                 await client.delete_messages(chat_id, batch)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.2)
             except Exception:
                 for mid in batch:
                     try:
                         await client.delete_messages(chat_id, mid)
-                        await asyncio.sleep(0.15)
+                        await asyncio.sleep(0.1)
                     except Exception:
                         pass
 
@@ -262,23 +266,6 @@ async def on_group_join(event):
         await client.delete_dialog(event.chat_id)
         await notify_dev("خرج البوت من مجموعة بسبب اسم مخالف:\n" + chat_title + "\nID: " + str(event.chat_id))
         return
-    try:
-        parts = await client.get_participants(event.chat_id)
-        humans = 0
-        for p in parts:
-            if not p.bot:
-                humans += 1
-        if humans < 5:
-            try:
-                await client.send_message(event.chat_id, "عدد الأعضاء الحقيقيين أقل من 5. لا يمكنني البقاء.")
-                await asyncio.sleep(3)
-            except Exception:
-                pass
-            await client.delete_dialog(event.chat_id)
-            await notify_dev("خرج البوت من مجموعة (عدد أعضاء أقل من 5):\n" + chat_title + "\nID: " + str(event.chat_id))
-            return
-    except Exception:
-        pass
     perms = None
     try:
         perms = await client.get_permissions(event.chat_id, me.id)
@@ -403,18 +390,20 @@ async def on_bot_mention(event):
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+    u = me.username or ""
     text = (
-        "بوت تحدي الثلاثين ثانية\n\n"
-        "بوت عربي لتنظيم تحديات سريعة داخل الكروبات.\n\n"
-        "أبرز الميزات:\n"
-        "- تحديات بين فريقين بأي عدد لاعبين\n"
-        "- تحديات بين كروبين مع ترشيح وتصويت\n"
-        "- نظام مزايدة وإجابات في الخاص\n"
-        "- تقييم الإجابات تلقائيًا\n"
-        "- لوحة متصدرين للأفضل\n\n"
-        "اضغط الزر لعرض التفاصيل."
+        "تحدي الثلاثين ثانية\n\n"
+        "لعبة سريعة وحلوة تخلي الكروب كله يشارك.\n\n"
+        "شلون تلعب:\n"
+        "فريقين يتقابلون، وكل جولة يطلع موضوع معين.\n"
+        "لاعب من الفريق الأول يزايد برقم، يعني يكول أني أذكر هذا العدد.\n"
+        "لاعب الفريق الثاني يكدر يقبل أو يرفع المزايدة.\n"
+        "اللي تثبت عنده المزايدة عنده ثلاثين ثانية يذكر الإجابات.\n"
+        "كل جولة فريق يخسر روح، وأول فريق تخلص أرواحه يخسر.\n\n"
+        "دز البوت لكروبك وابدأ التحدي.\n"
+        "@" + u
     )
-    kb = [[Button.inline("عرض التفاصيل", b"promo_info")]]
+    kb = [[Button.inline("شنو هذا البوت", b"promo_info")]]
     try:
         await event.reply(text, buttons=kb)
     except Exception:
@@ -427,19 +416,13 @@ async def cb_promo_info(event):
     me = await client.get_me()
     u = me.username or ""
     text = (
-        "بوت تحدي الثلاثين ثانية\n\n"
-        "كيف يعمل البوت:\n\n"
-        "1) بدء مبارة مع مجموعة أخرى:\n"
-        "يفتح باب الترشيح والتصويت في كروبكم. البوت يختار أعلى المرشحين بالتصويت، ويطابقكم مع كروب آخر في قائمة الانتظار.\n\n"
-        "2) بدء مبارة داخل الكروب:\n"
-        "يحدد قائد التحدي عدد اللاعبين لكل فريق، ثم يفتح زر الانضمام للأعضاء. عند اكتمال العدد يبدأ التحدي.\n\n"
-        "3) نظام المزايدة:\n"
-        "المزايد يستلم سؤالًا في الخاص ويحدد رقمًا. الخصم يقدر يجبره على الإجابة أو يزايد برقم أعلى. المجيب لديه ثلاثون ثانية.\n\n"
-        "4) التقييم:\n"
-        "الإجابات تُقيَّم تلقائيًا. كل فريق عنده أرواح بعدد لاعبيه، أول من يفقدها يخسر.\n\n"
-        "5) لوحة المتصدرين:\n"
-        "يتم احتساب نقاط الكروبات واللاعبين. استعمل /top لرؤية الأفضل.\n\n"
-        "أضف البوت إلى مجموعتك وابدأ اللعب."
+        "تحدي الثلاثين ثانية\n\n"
+        "لعبة جماعية سريعة، فريقين يتقابلون، وكل جولة يطلع موضوع.\n"
+        "المزايد يكول جم لاعب يذكر، والخصم يقبل أو يرفع.\n"
+        "اللي تثبت عنده المزايدة عنده ثلاثين ثانية يذكر الإجابات.\n"
+        "كل جولة فريق يخسر روح، وأول فريق تخلص أرواحه يخسر.\n\n"
+        "أضف البوت لمجموعتك وابدأ التحدي.\n"
+        "@" + u
     )
     kb = [
         [Button.url("افتح البوت في الخاص", "https://t.me/" + u)],
@@ -450,7 +433,7 @@ async def cb_promo_info(event):
     except Exception:
         await event.reply(text, buttons=kb)
 
-@client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
+  @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
 async def cmd_start_game(event):
     if event.is_private:
@@ -476,15 +459,15 @@ async def cmd_start_game(event):
                 n = None
     if n is None:
         kb = []
-        for size in (1, 2, 3, 4, 5):
+        for size in (1, 2, 3, 4, 5, 6, 7):
             kb.append([Button.inline(str(size) + " ضد " + str(size), ("internal_size_" + str(size)).encode())])
         return await event.reply("اختر عدد اللاعبين لكل فريق:", buttons=kb)
     try:
         team_size = int(n)
     except Exception:
         return await event.reply("أرسل رقمًا صحيحًا.")
-    if team_size < 1 or team_size > 10:
-        return await event.reply("عدد اللاعبين لكل فريق يجب أن يكون بين 1 و 10.")
+    if team_size < 1 or team_size > 7:
+        return await event.reply("عدد اللاعبين لكل فريق يجب أن يكون بين 1 و 7.")
     await start_internal(event.chat_id, safe_str(event.chat.title, "مجموعة"), team_size)
 
 @client.on(events.NewMessage(pattern=r"^/ai_play$"))
@@ -753,7 +736,7 @@ async def cb_mode_tournament(event):
 @safe_execute
 async def cb_mode_internal(event):
     kb = []
-    for n in (1, 2, 3, 4, 5):
+    for n in (1, 2, 3, 4, 5, 6, 7):
         kb.append([Button.inline(str(n) + " ضد " + str(n), ("internal_size_" + str(n)).encode())])
     await event.edit("اختر عدد اللاعبين لكل فريق:", buttons=kb)
 
@@ -838,6 +821,7 @@ async def start_internal(chat_id, chat_name, team_size):
     g._name_cache = {}
     g.team1_label = ""
     g.team2_label = ""
+    g.start_time = time.time()
     internal_games[chat_id] = g
     u = await bot_username()
     join_url = "https://t.me/" + u + "?start=join_" + str(chat_id)
@@ -877,7 +861,7 @@ async def join_timeout_internal(chat_id):
         pass
     await delete_pinned(g, chat_id)
     await strip_buttons(g)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     await delete_tracked(g)
     try:
         await client.send_message(chat_id, "تم إلغاء التحدي لعدم اكتمال العدد خلال دقيقتين.")
@@ -885,7 +869,7 @@ async def join_timeout_internal(chat_id):
         pass
 
 async def bidding_countdown(game_obj, chat_id, user_id, label):
-    checkpoints = [15, 10, 5, 3, 2, 1]
+    checkpoints = [10, 5, 3, 1]
     prev = 20
     for cp in checkpoints:
         delay = prev - cp
@@ -904,7 +888,7 @@ async def bidding_countdown(game_obj, chat_id, user_id, label):
         prev = cp
 
 async def answer_countdown(game_obj, chat_id, user_id, label):
-    checkpoints = [25, 20, 15, 10, 5, 3, 2, 1]
+    checkpoints = [20, 10, 5, 3, 1]
     prev = 30
     for cp in checkpoints:
         delay = prev - cp
@@ -923,7 +907,7 @@ async def answer_countdown(game_obj, chat_id, user_id, label):
         prev = cp
 
 async def opponent_countdown(game_obj, chat_id, user_id, label):
-    checkpoints = [15, 10, 5, 3, 2, 1]
+    checkpoints = [10, 5, 3, 1]
     prev = 20
     for cp in checkpoints:
         delay = prev - cp
@@ -1013,7 +997,7 @@ async def cb_ready_internal(event):
             pass
         await asyncio.sleep(1)
         await send_teams_intro_internal(g)
-        await asyncio.sleep(6)
+        await asyncio.sleep(4)
         await start_round_internal(g)
 
 async def send_teams_intro_internal(g):
@@ -1051,6 +1035,7 @@ async def start_round_internal(g):
     g.current_bid = 0
     g.answers = []
     g.opponent_resolved = False
+    g.forced = False
     b, o, bteam = decide_bidder_teams(g)
     g.bidder = b
     g.opponent = o
@@ -1108,7 +1093,7 @@ async def end_internal_no_winner(g):
     await delete_round_messages(g)
     await delete_pinned(g, g.chat_id)
     await strip_buttons(g)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     await delete_tracked(g)
     for p in g.players:
         private_sessions.pop(p, None)
@@ -1123,6 +1108,7 @@ async def advance_round_internal(g):
 
 async def finish_internal(g):
     g.state = "done"
+    g.end_time = time.time()
     if g.team_size == 1:
         t1_label = user_link(g.team1[0], g.team1_label)
         t2_label = user_link(g.team2[0], g.team2_label)
@@ -1131,21 +1117,28 @@ async def finish_internal(g):
         t2_label = g.team2_label
     if g.team1_points > g.team2_points:
         winner_label = t1_label
-        add_points(g.chat_id, "group", 50, g.chat_name)
+        winner_pts, reason = await evaluate_winner_points(g.round_stats, g.team1_label, g.team2_label, g.team_size)
+        add_points(g.chat_id, "group", winner_pts, g.chat_name)
         update_win_loss(g.chat_id, "group", True)
-    else:
+        result_text = "الفائز: " + winner_label + "\nالنقاط: " + str(winner_pts) + "\n" + safe_str(reason, "")
+    elif g.team2_points > g.team1_points:
         winner_label = t2_label
-        add_points(g.chat_id, "group", -20, g.chat_name)
-        update_win_loss(g.chat_id, "group", False)
+        winner_pts, reason = await evaluate_winner_points(g.round_stats, g.team2_label, g.team1_label, g.team_size)
+        add_points(g.chat_id, "group", winner_pts, g.chat_name)
+        update_win_loss(g.chat_id, "group", True)
+        result_text = "الفائز: " + winner_label + "\nالنقاط: " + str(winner_pts) + "\n" + safe_str(reason, "")
+    else:
+        add_points(g.chat_id, "group", 0, g.chat_name)
+        result_text = "انتهت المباراة بالتعادل."
     await cancel_tasks(g)
     await delete_round_messages(g)
     await delete_pinned(g, g.chat_id)
     await strip_buttons(g)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     await delete_tracked(g)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     try:
-        await client.send_message(g.chat_id, "انتهت المباراة.\n\nالفائز: " + winner_label + "\n\nأرواح " + t1_label + ": " + str(g.team1_points) + "\nأرواح " + t2_label + ": " + str(g.team2_points))
+        await client.send_message(g.chat_id, "انتهت المباراة.\n\n" + result_text + "\n\nأرواح " + t1_label + ": " + str(g.team1_points) + "\nأرواح " + t2_label + ": " + str(g.team2_points))
     except Exception:
         pass
     for p in g.players:
@@ -1162,16 +1155,18 @@ async def open_nomination(match):
     try:
         msg1 = await client.send_message(match.group1_id, text1, buttons=kb)
         match.tracked_messages.append((match.group1_id, msg1.id))
+        match.nom_msg_ids[match.group1_id] = msg1.id
         try:
             await client.pin_message(match.group1_id, msg1, notify=False)
         except Exception:
             pass
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.2)
     except Exception:
         pass
     try:
         msg2 = await client.send_message(match.group2_id, text2, buttons=kb)
         match.tracked_messages.append((match.group2_id, msg2.id))
+        match.nom_msg_ids[match.group2_id] = msg2.id
         try:
             await client.pin_message(match.group2_id, msg2, notify=False)
         except Exception:
@@ -1204,13 +1199,22 @@ async def refresh_nom_msg(m, gid):
     lines = ["المرشحون في " + safe_str(header, "") + ":"]
     buttons = []
     for uid, d in lst:
-        lines.append("- " + user_link(uid, safe_str(d["name"], "")) + " — " + str(len(d["votes"])) + " صوت")
+        lines.append(user_link(uid, safe_str(d["name"], "")) + " — " + str(len(d["votes"])) + " صوت")
         buttons.append([Button.inline("تصويت لـ " + safe_str(d["name"], ""), ("vote_" + str(m.match_id) + "_" + str(gid) + "_" + str(uid)).encode())])
     buttons.append([Button.inline("إنهاء الترشيح الآن", ("close_nom_" + str(m.match_id) + "_" + str(gid)).encode())])
+    new_text = "\n".join(lines)
+    old_id = m.nom_msg_ids.get(gid)
+    if old_id:
+        try:
+            await client.edit_message(gid, old_id, new_text, buttons=buttons)
+            return
+        except Exception:
+            pass
     try:
-        msg = await client.send_message(gid, "\n".join(lines), buttons=buttons)
+        msg = await client.send_message(gid, new_text, buttons=buttons)
+        m.nom_msg_ids[gid] = msg.id
         m.tracked_messages.append((gid, msg.id))
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.2)
     except Exception:
         pass
 
@@ -1232,6 +1236,7 @@ async def cb_vote(event):
         c["votes"].discard(voter.id)
     m.candidates[gid][uid]["votes"].add(voter.id)
     await event.answer("تم التصويت.")
+    await refresh_nom_msg(m, gid)
 
 @client.on(events.CallbackQuery(pattern=r"^close_nom_(\d+)_(-?\d+)$"))
 @safe_execute
@@ -1251,6 +1256,7 @@ async def cb_close_nom(event):
     m.team1 = m.resolve_top(m.group1_id)
     m.team2 = m.resolve_top(m.group2_id)
     m.state = "ready_check"
+    m.start_time = time.time()
     await event.answer("تم إغلاق الترشيح.")
     for gid_, team, gname in ((m.group1_id, m.team1, m.group1_name),
                               (m.group2_id, m.team2, m.group2_name)):
@@ -1273,7 +1279,7 @@ async def cb_close_nom(event):
         try:
             msg = await client.send_message(gid_, txt, buttons=kb)
             m.tracked_messages.append((gid_, msg.id))
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.2)
         except Exception:
             pass
 
@@ -1297,7 +1303,7 @@ async def cb_ready_t(event):
     if needed > 0 and len(m.ready) >= needed:
         await asyncio.sleep(1)
         await send_teams_intro_tournament(m)
-        await asyncio.sleep(6)
+        await asyncio.sleep(4)
         await start_round_tournament(m)
 
 async def send_teams_intro_tournament(m):
@@ -1340,6 +1346,7 @@ async def start_round_tournament(m):
     m.current_bid = 0
     m.answers = []
     m.opponent_resolved = False
+    m.forced = False
     b, o, bteam = decide_bidder_tournament(m)
     m.bidder = b
     m.opponent = o
@@ -1407,7 +1414,7 @@ async def end_tournament_no_winner(m):
     await cancel_tasks(m)
     await delete_round_messages(m)
     await strip_buttons(m)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     await delete_tracked(m)
     for p in m.team1 + m.team2:
         private_sessions.pop(p["user_id"], None)
@@ -1422,33 +1429,42 @@ async def advance_round_tournament(m):
 
 async def finish_tournament(m):
     m.state = "done"
+    m.end_time = time.time()
     if m.team1_points > m.team2_points:
         winner = m.group1_name
-        add_points(m.group1_id, "group", 50, m.group1_name)
+        winner_pts, reason = await evaluate_winner_points(m.round_stats, m.group1_name, m.group2_name, m.squad)
+        add_points(m.group1_id, "group", winner_pts, m.group1_name)
         add_points(m.group2_id, "group", -20, m.group2_name)
         update_win_loss(m.group1_id, "group", True)
         update_win_loss(m.group2_id, "group", False)
-    else:
+        result_text = "الفائز: " + safe_str(winner, "") + "\nالنقاط: " + str(winner_pts) + "\n" + safe_str(reason, "")
+    elif m.team2_points > m.team1_points:
         winner = m.group2_name
-        add_points(m.group2_id, "group", 50, m.group2_name)
+        winner_pts, reason = await evaluate_winner_points(m.round_stats, m.group2_name, m.group1_name, m.squad)
+        add_points(m.group2_id, "group", winner_pts, m.group2_name)
         add_points(m.group1_id, "group", -20, m.group1_name)
         update_win_loss(m.group2_id, "group", True)
         update_win_loss(m.group1_id, "group", False)
+        result_text = "الفائز: " + safe_str(winner, "") + "\nالنقاط: " + str(winner_pts) + "\n" + safe_str(reason, "")
+    else:
+        add_points(m.group1_id, "group", 0, m.group1_name)
+        add_points(m.group2_id, "group", 0, m.group2_name)
+        result_text = "انتهت المباراة بالتعادل."
     await cancel_tasks(m)
     await delete_round_messages(m)
     await strip_buttons(m)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     await delete_tracked(m)
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.2)
     for gid in m.both_groups():
         try:
-            await client.send_message(gid, "انتهت المباراة.\n\nالفائز: " + safe_str(winner, "") + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
+            await client.send_message(gid, "انتهت المباراة.\n\n" + result_text + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points))
         except Exception:
             pass
     for p in m.team1 + m.team2:
         private_sessions.pop(p["user_id"], None)
     tournaments.pop(m.match_id, None)
-    await notify_dev("انتهاء تحدي كروبين:\n" + safe_str(m.group1_name, "") + " ضد " + safe_str(m.group2_name, "") + "\nالفائز: " + safe_str(winner, ""))
+    await notify_dev("انتهاء تحدي كروبين:\n" + safe_str(m.group1_name, "") + " ضد " + safe_str(m.group2_name, "") + "\n" + result_text)
 
 @client.on(events.NewMessage(func=lambda e: e.is_private))
 @safe_execute
@@ -1474,12 +1490,11 @@ async def private_handler(event):
             ag["expected_count"] = bid
             ag["player_answers"] = []
             ag["state"] = "player_answering"
-            await event.reply("تم تسجيل مزايدتك " + str(bid) + ".\n\nابدأ بإرسال الإجابات، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط زر أنهيت الإجابة.")
-            kb = [[Button.inline("أنهيت الإجابة", b"ai_finish_player")]]
-            await event.reply("جاهز؟", buttons=kb)
+            await event.reply("تم تسجيل مزايدتك " + str(bid) + ".\n\nابدأ بإرسال الإجابات، كل إجابة في رسالة منفصلة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت تلقائيًا.")
             return
         if ag["state"] == "player_answering":
             ag["player_answers"].append(txt)
+            ag["_last_answer_time"] = time.time()
             return
         if ag["state"] == "ai_turn":
             return await event.reply("انتظر دور الذكاء الاصطناعي.")
@@ -1556,6 +1571,13 @@ async def private_handler(event):
 
         elif sess["role"] == "bidder" and g.state == "answering":
             g.answers.append(text)
+            g._last_answer_time = time.time()
+            try:
+                await event.delete()
+            except Exception:
+                pass
+            if not hasattr(g, "answer_watcher_task") or g.answer_watcher_task is None or g.answer_watcher_task.done():
+                g.answer_watcher_task = asyncio.create_task(answer_watcher_internal(g, uid))
         else:
             return
 
@@ -1629,8 +1651,61 @@ async def private_handler(event):
 
         elif sess["role"] == "bidder" and m.state == "answering":
             m.answers.append(text)
+            m._last_answer_time = time.time()
+            try:
+                await event.delete()
+            except Exception:
+                pass
+            if not hasattr(m, "answer_watcher_task") or m.answer_watcher_task is None or m.answer_watcher_task.done():
+                m.answer_watcher_task = asyncio.create_task(answer_watcher_tournament(m, uid))
         else:
             return
+
+async def answer_watcher_internal(g, bidder):
+    while True:
+        await asyncio.sleep(3)
+        if g.state != "answering" or g.bidder != bidder:
+            return
+        last = getattr(g, "_last_answer_time", 0)
+        if time.time() - last < 3:
+            continue
+        if not g.answers:
+            continue
+        if len(g.answers) >= g.current_bid:
+            break
+        break
+    if g.state != "answering" or g.bidder != bidder:
+        return
+    try:
+        if g.answer_task:
+            g.answer_task.cancel()
+    except Exception:
+        pass
+    await client.send_message(bidder, "اكملت. جاري التقييم.")
+    await evaluate_internal(g, bidder)
+
+async def answer_watcher_tournament(m, bidder):
+    while True:
+        await asyncio.sleep(3)
+        if m.state != "answering" or m.bidder != bidder:
+            return
+        last = getattr(m, "_last_answer_time", 0)
+        if time.time() - last < 3:
+            continue
+        if not m.answers:
+            continue
+        if len(m.answers) >= m.current_bid:
+            break
+        break
+    if m.state != "answering" or m.bidder != bidder:
+        return
+    try:
+        if m.answer_task:
+            m.answer_task.cancel()
+    except Exception:
+        pass
+    await client.send_message(bidder, "اكملت. جاري التقييم.")
+    await evaluate_tournament(m, bidder)
 
 @client.on(events.CallbackQuery(pattern=r"^force_(-?\d+)_(\d+)$"))
 @safe_execute
@@ -1650,13 +1725,24 @@ async def cb_force_internal(event):
     if g.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
     g.opponent_resolved = True
+    g.forced = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
         if hasattr(g, "opponent_task") and g.opponent_task:
             g.opponent_task.cancel()
     except Exception:
         pass
-    await send_to_group(g, g.chat_id, "تم إجبار اللاعب على الإجابة بالرقم " + str(g.current_bid) + ".", round_level=True)
+    try:
+        await event.delete()
+    except Exception:
+        pass
+    bid = g.current_bid
+    bname = g._name_cache.get(bidder, "لاعب") if hasattr(g, "_name_cache") else "لاعب"
+    oname = g._name_cache.get(uid, "لاعب") if hasattr(g, "_name_cache") else "لاعب"
+    text = ("تم إجبار اللاعب " + user_link(bidder, bname) + " على الإجابة بالرقم " + str(bid) + ".\n"
+            "الخصم " + user_link(uid, oname) + " اتخذ القرار.\n"
+            "على " + user_link(bidder, bname) + " أن يذكر " + str(bid) + " إجابة خلال 30 ثانية.")
+    await send_to_group(g, g.chat_id, text, round_level=True)
     await begin_answer_internal(g, g.bidder)
 
 async def begin_answer_internal(g, bidder):
@@ -1664,10 +1750,11 @@ async def begin_answer_internal(g, bidder):
         return
     g.state = "answering"
     g.answers = []
-    kb = [[Button.inline("أنهيت الإجابة", ("finish_int_" + str(g.chat_id)).encode())],
-          [Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
+    g.answer_start_time = time.time()
+    g._last_answer_time = time.time()
+    kb = [[Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
     g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
     asyncio.create_task(answer_countdown(g, g.chat_id, bidder, " للإجابة"))
 
@@ -1693,12 +1780,18 @@ async def cb_finish_internal(event):
 
 async def evaluate_internal(g, bidder):
     g.state = "evaluating"
+    duration = time.time() - getattr(g, "answer_start_time", time.time())
     ok, reason = await evaluate_answers_with_ai(g.question, g.current_bid, g.answers)
     try:
         bn = clean_name((await client.get_entity(bidder)).first_name)
     except Exception:
         bn = "لاعب"
     team = 1 if bidder in g.team1 else 2
+    for a in g.answers:
+        try:
+            pass
+        except Exception:
+            pass
     if ok:
         if team == 1:
             g.team2_points -= 1
@@ -1715,6 +1808,7 @@ async def evaluate_internal(g, bidder):
             g.team2_points -= 1
         add_points(bidder, "player", -20, bn)
         result_line = "فشل اللاعب " + user_link(bidder, bn) + "\n" + reason
+    g.record_round(g.round, bidder, team, g.current_bid, ok, len(g.answers), duration, g.forced)
     text = result_line + "\n\nأرواح " + g.team1_label + ": " + str(g.team1_points) + "\nأرواح " + g.team2_label + ": " + str(g.team2_points)
     await send_to_group(g, g.chat_id, text, round_level=True)
     try:
@@ -1745,14 +1839,30 @@ async def cb_force_t(event):
     if m.current_bid < 1:
         return await event.answer("انتظر حتى يزايد الخصم.", alert=True)
     m.opponent_resolved = True
+    m.forced = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
         if hasattr(m, "opponent_task") and m.opponent_task:
             m.opponent_task.cancel()
     except Exception:
         pass
+    try:
+        await event.delete()
+    except Exception:
+        pass
+    bid = m.current_bid
+    bname = "لاعب"
+    oname = "لاعب"
+    for p in m.team1 + m.team2:
+        if p["user_id"] == bidder:
+            bname = p["name"]
+        if p["user_id"] == uid:
+            oname = p["name"]
+    text = ("تم إجبار اللاعب " + user_link(bidder, bname) + " على الإجابة بالرقم " + str(bid) + ".\n"
+            "الخصم " + user_link(uid, oname) + " اتخذ القرار.\n"
+            "على " + user_link(bidder, bname) + " أن يذكر " + str(bid) + " إجابة خلال 30 ثانية.")
     for gid in m.both_groups():
-        await send_to_group(m, gid, "تم إجبار اللاعب على الإجابة بالرقم " + str(m.current_bid) + ".", round_level=True)
+        await send_to_group(m, gid, text, round_level=True)
     await begin_answer_tournament(m, m.bidder)
 
 async def begin_answer_tournament(m, bidder):
@@ -1760,10 +1870,11 @@ async def begin_answer_tournament(m, bidder):
         return
     m.state = "answering"
     m.answers = []
-    kb = [[Button.inline("أنهيت الإجابة", ("finish_t_" + str(m.match_id)).encode())],
-          [Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
+    m.answer_start_time = time.time()
+    m._last_answer_time = time.time()
+    kb = [[Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nعند الانتهاء اضغط الزر. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
     m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
     asyncio.create_task(answer_countdown(m, m.group1_id, bidder, " للإجابة"))
 
@@ -1789,6 +1900,7 @@ async def cb_finish_t(event):
 
 async def evaluate_tournament(m, bidder):
     m.state = "evaluating"
+    duration = time.time() - getattr(m, "answer_start_time", time.time())
     ok, reason = await evaluate_answers_with_ai(m.question, m.current_bid, m.answers)
     team1_ids = [p["user_id"] for p in m.team1]
     team = 1 if bidder in team1_ids else 2
@@ -1813,6 +1925,7 @@ async def evaluate_tournament(m, bidder):
             m.team2_points -= 1
         add_points(bidder, "player", -20, bname)
         result_line = "فشل اللاعب " + user_link(bidder, bname) + "\n" + reason
+    m.record_round(m.round, bidder, team, m.current_bid, ok, len(m.answers), duration, m.forced)
     for gid in m.both_groups():
         text = result_line + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
         await send_to_group(m, gid, text, round_level=True)
@@ -1828,218 +1941,6 @@ async def evaluate_tournament(m, bidder):
         await finish_tournament(m)
         return
     await advance_round_tournament(m)
-
-@client.on(events.CallbackQuery(data=b"dev_notif_on"))
-@safe_execute
-async def cb_dev_notif_on(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    set_setting("dev_notifications", "1")
-    await event.answer("تم التشغيل.")
-    try:
-        await event.edit("لوحة تحكم المطور\n\nحالة الإشعارات: مفعلة\n\nاستعمل الأزرار التالية للتحكم.", buttons=[
-            [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
-             Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
-            [Button.inline("اختبار الإشعار", b"dev_notif_test")],
-            [Button.inline("إحصائيات البوت", b"dev_stats")],
-            [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
-            [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
-            [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
-            [Button.inline("تعليمات الحظر", b"dev_ban_help")],
-            [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
-        ])
-    except Exception:
-        pass
-
-@client.on(events.CallbackQuery(data=b"dev_notif_off"))
-@safe_execute
-async def cb_dev_notif_off(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    set_setting("dev_notifications", "0")
-    await event.answer("تم الإيقاف.")
-    try:
-        await event.edit("لوحة تحكم المطور\n\nحالة الإشعارات: متوقفة\n\nاستعمل الأزرار التالية للتحكم.", buttons=[
-            [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
-             Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
-            [Button.inline("اختبار الإشعار", b"dev_notif_test")],
-            [Button.inline("إحصائيات البوت", b"dev_stats")],
-            [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
-            [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
-            [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
-            [Button.inline("تعليمات الحظر", b"dev_ban_help")],
-            [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
-        ])
-    except Exception:
-        pass
-
-@client.on(events.CallbackQuery(data=b"dev_notif_test"))
-@safe_execute
-async def cb_dev_notif_test(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await notify_dev("هذا إشعار تجريبي من البوت.")
-    await event.answer("تم إرسال إشعار تجريبي.")
-
-@client.on(events.CallbackQuery(data=b"dev_stats"))
-@safe_execute
-async def cb_dev_stats(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    s = get_stats()
-    text = ("إحصائيات البوت\n\n"
-            "المجموعات: " + str(s["groups"]) + "\n"
-            "اللاعبون: " + str(s["players"]) + "\n"
-            "المستخدمون: " + str(s["users"]) + "\n"
-            "المجموعات المحظورة: " + str(s["banned"]) + "\n"
-            "قنوات الاشتراك: " + str(s["subs"]))
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_list_subs"))
-@safe_execute
-async def cb_dev_list_subs(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    subs = get_force_subs()
-    if not subs:
-        text = "لا توجد قنوات اشتراك إجباري."
-    else:
-        lines = ["قنوات الاشتراك الإجباري:"]
-        for s in subs:
-            lines.append("- " + safe_str(s["username"], "") + " (وضع الطلب: " + str(s["is_request_mode"]) + ")")
-        text = "\n".join(lines)
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_list_banned"))
-@safe_execute
-async def cb_dev_list_banned(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    from database import get_connection
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT chat_id FROM banned_groups")
-    rows = c.fetchall()
-    conn.close()
-    if not rows:
-        text = "لا توجد مجموعات محظورة."
-    else:
-        lines = ["المجموعات المحظورة:"]
-        for r in rows:
-            lines.append("- " + str(r["chat_id"]))
-        text = "\n".join(lines)
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_broadcast_help"))
-@safe_execute
-async def cb_dev_broadcast_help(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    text = ("تعليمات الإذاعة:\n\n"
-            "إذاعة للمجموعات:\n"
-            "/broadcast_groups نص الرسالة\n\n"
-            "إذاعة لمستخدمي الخاص:\n"
-            "/broadcast_users نص الرسالة\n\n"
-            "إذاعة للجميع:\n"
-            "/broadcast_all نص الرسالة")
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_ban_help"))
-@safe_execute
-async def cb_dev_ban_help(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    text = ("تعليمات الحظر:\n\n"
-            "حظر مجموعة:\n"
-            "/ban_group رقم_المجموعة\n\n"
-            "إلغاء حظر مجموعة:\n"
-            "/unban_group رقم_المجموعة\n\n"
-            "مثال:\n"
-            "/ban_group -1001234567890")
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_sub_help"))
-@safe_execute
-async def cb_dev_sub_help(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    text = ("تعليمات قنوات الاشتراك الإجباري:\n\n"
-            "إضافة قناة بدون وضع الطلب:\n"
-            "/add_sub @channel 0\n\n"
-            "إضافة قناة مع وضع الطلب:\n"
-            "/add_sub @channel 1\n\n"
-            "حذف قناة:\n"
-            "/remove_sub @channel\n\n"
-            "عرض القائمة:\n"
-            "/list_subs")
-    kb = [[Button.inline("رجوع", b"dev_back")]]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(data=b"dev_back"))
-@safe_execute
-async def cb_dev_back(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    val = get_setting("dev_notifications", "1")
-    status = "مفعلة" if val == "1" else "متوقفة"
-    text = ("لوحة تحكم المطور\n\n"
-            "حالة الإشعارات: " + status + "\n\n"
-            "استعمل الأزرار التالية للتحكم.")
-    kb = [
-        [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
-         Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
-        [Button.inline("اختبار الإشعار", b"dev_notif_test")],
-        [Button.inline("إحصائيات البوت", b"dev_stats")],
-        [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
-        [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
-        [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
-        [Button.inline("تعليمات الحظر", b"dev_ban_help")],
-        [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
-    ]
-    try:
-        await event.edit(text, buttons=kb)
-    except Exception:
-        await event.reply(text, buttons=kb)
-
-@client.on(events.CallbackQuery(pattern=r"^outbid_(-?\d+)_(\d+)$"))
-@safe_execute
-async def cb_outbid_internal(event):
-    await event.answer("هذا الزر متوقف.", alert=True)
-
-@client.on(events.CallbackQuery(pattern=r"^outbid_t_(\d+)_(\d+)$"))
-@safe_execute
-async def cb_outbid_t(event):
-    await event.answer("هذا الزر متوقف.", alert=True)
 
 @client.on(events.CallbackQuery(pattern=r"^wd_round_int_(-?\d+)$"))
 @safe_execute
@@ -2166,6 +2067,16 @@ async def cb_wd_match_tournament(event):
         m.team2_points = 0
     await finish_tournament(m)
 
+@client.on(events.CallbackQuery(pattern=r"^outbid_(-?\d+)_(\d+)$"))
+@safe_execute
+async def cb_outbid_internal(event):
+    await event.answer("هذا الزر متوقف.", alert=True)
+
+@client.on(events.CallbackQuery(pattern=r"^outbid_t_(\d+)_(\d+)$"))
+@safe_execute
+async def cb_outbid_t(event):
+    await event.answer("هذا الزر متوقف.", alert=True)
+
 @client.on(events.NewMessage(pattern=r"^/status(?:@\S+)?$"))
 @safe_execute
 async def cmd_status(event):
@@ -2202,7 +2113,7 @@ async def cmd_end(event):
         await delete_round_messages(g)
         await delete_pinned(g, event.chat_id)
         await strip_buttons(g)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
         await delete_tracked(g)
         for p in g.players:
             private_sessions.pop(p, None)
@@ -2214,7 +2125,7 @@ async def cmd_end(event):
             await cancel_tasks(m)
             await delete_round_messages(m)
             await strip_buttons(m)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.2)
             await delete_tracked(m)
             for p in m.team1 + m.team2:
                 private_sessions.pop(p["user_id"], None)
@@ -2235,14 +2146,26 @@ async def cmd_top(event):
         return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     if not await require_subscription(event):
         return
-    gtop = get_top("group")
-    ptop = get_top("player")
+    from database import get_connection
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT name, points FROM groups ORDER BY points DESC LIMIT 5")
+    gtop = c.fetchall()
+    c.execute("SELECT user_id, name, points FROM players ORDER BY points DESC LIMIT 5")
+    ptop = c.fetchall()
+    conn.close()
     msg = "لوحة المتصدرين\n\nأفضل الكروبات:\n"
+    if not gtop:
+        msg += "لا يوجد\n"
     for r in gtop:
-        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
+        msg += safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
     msg += "\nأفضل اللاعبين:\n"
+    if not ptop:
+        msg += "لا يوجد\n"
     for r in ptop:
-        msg += "- " + safe_str(r["name"], "") + ": " + str(r["points"]) + " نقطة\n"
+        uid = r["user_id"]
+        name = safe_str(r["name"], "")
+        msg += user_link(uid, name) + ": " + str(r["points"]) + " نقطة\n"
     await event.reply(msg)
 
 @client.on(events.NewMessage(pattern=r"^/help(?:@\S+)?$"))
@@ -2381,8 +2304,210 @@ async def cmd_list_subs(event):
         return await event.reply("لا توجد قنوات اشتراك إجباري.")
     lines = ["قنوات الاشتراك:"]
     for s in subs:
-        lines.append("- " + safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
+        lines.append(safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
     await event.reply("\n".join(lines))
+
+@client.on(events.CallbackQuery(data=b"dev_notif_on"))
+@safe_execute
+async def cb_dev_notif_on(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    set_setting("dev_notifications", "1")
+    await event.answer("تم التشغيل.")
+    try:
+        await event.edit("لوحة تحكم المطور\n\nحالة الإشعارات: مفعلة\n\nاستعمل الأزرار التالية للتحكم.", buttons=[
+            [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
+             Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
+            [Button.inline("اختبار الإشعار", b"dev_notif_test")],
+            [Button.inline("إحصائيات البوت", b"dev_stats")],
+            [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
+            [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
+            [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
+            [Button.inline("تعليمات الحظر", b"dev_ban_help")],
+            [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
+        ])
+    except Exception:
+        pass
+
+@client.on(events.CallbackQuery(data=b"dev_notif_off"))
+@safe_execute
+async def cb_dev_notif_off(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    set_setting("dev_notifications", "0")
+    await event.answer("تم الإيقاف.")
+    try:
+        await event.edit("لوحة تحكم المطور\n\nحالة الإشعارات: متوقفة\n\nاستعمل الأزرار التالية للتحكم.", buttons=[
+            [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
+             Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
+            [Button.inline("اختبار الإشعار", b"dev_notif_test")],
+            [Button.inline("إحصائيات البوت", b"dev_stats")],
+            [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
+            [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
+            [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
+            [Button.inline("تعليمات الحظر", b"dev_ban_help")],
+            [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
+        ])
+    except Exception:
+        pass
+
+@client.on(events.CallbackQuery(data=b"dev_notif_test"))
+@safe_execute
+async def cb_dev_notif_test(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await notify_dev("هذا إشعار تجريبي من البوت.")
+    await event.answer("تم إرسال إشعار تجريبي.")
+
+@client.on(events.CallbackQuery(data=b"dev_stats"))
+@safe_execute
+async def cb_dev_stats(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    s = get_stats()
+    text = ("إحصائيات البوت\n\n"
+            "المجموعات: " + str(s["groups"]) + "\n"
+            "اللاعبون: " + str(s["players"]) + "\n"
+            "المستخدمون: " + str(s["users"]) + "\n"
+            "المجموعات المحظورة: " + str(s["banned"]) + "\n"
+            "قنوات الاشتراك: " + str(s["subs"]))
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_list_subs"))
+@safe_execute
+async def cb_dev_list_subs(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    subs = get_force_subs()
+    if not subs:
+        text = "لا توجد قنوات اشتراك إجباري."
+    else:
+        lines = ["قنوات الاشتراك الإجباري:"]
+        for s in subs:
+            lines.append(safe_str(s["username"], "") + " (وضع الطلب: " + str(s["is_request_mode"]) + ")")
+        text = "\n".join(lines)
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_list_banned"))
+@safe_execute
+async def cb_dev_list_banned(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    from database import get_connection
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT chat_id FROM banned_groups")
+    rows = c.fetchall()
+    conn.close()
+    if not rows:
+        text = "لا توجد مجموعات محظورة."
+    else:
+        lines = ["المجموعات المحظورة:"]
+        for r in rows:
+            lines.append(str(r["chat_id"]))
+        text = "\n".join(lines)
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_broadcast_help"))
+@safe_execute
+async def cb_dev_broadcast_help(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    text = ("تعليمات الإذاعة:\n\n"
+            "إذاعة للمجموعات:\n"
+            "/broadcast_groups نص الرسالة\n\n"
+            "إذاعة لمستخدمي الخاص:\n"
+            "/broadcast_users نص الرسالة\n\n"
+            "إذاعة للجميع:\n"
+            "/broadcast_all نص الرسالة")
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_ban_help"))
+@safe_execute
+async def cb_dev_ban_help(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    text = ("تعليمات الحظر:\n\n"
+            "حظر مجموعة:\n"
+            "/ban_group رقم_المجموعة\n\n"
+            "إلغاء حظر مجموعة:\n"
+            "/unban_group رقم_المجموعة\n\n"
+            "مثال:\n"
+            "/ban_group -1001234567890")
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_sub_help"))
+@safe_execute
+async def cb_dev_sub_help(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    text = ("تعليمات قنوات الاشتراك الإجباري:\n\n"
+            "إضافة قناة بدون وضع الطلب:\n"
+            "/add_sub @channel 0\n\n"
+            "إضافة قناة مع وضع الطلب:\n"
+            "/add_sub @channel 1\n\n"
+            "حذف قناة:\n"
+            "/remove_sub @channel\n\n"
+            "عرض القائمة:\n"
+            "/list_subs")
+    kb = [[Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
+
+@client.on(events.CallbackQuery(data=b"dev_back"))
+@safe_execute
+async def cb_dev_back(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    val = get_setting("dev_notifications", "1")
+    status = "مفعلة" if val == "1" else "متوقفة"
+    text = ("لوحة تحكم المطور\n\n"
+            "حالة الإشعارات: " + status + "\n\n"
+            "استعمل الأزرار التالية للتحكم.")
+    kb = [
+        [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
+         Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
+        [Button.inline("اختبار الإشعار", b"dev_notif_test")],
+        [Button.inline("إحصائيات البوت", b"dev_stats")],
+        [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
+        [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
+        [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
+        [Button.inline("تعليمات الحظر", b"dev_ban_help")],
+        [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
+    ]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        await event.reply(text, buttons=kb)
 
 print("Bot is running...")
 client.run_until_disconnected()
