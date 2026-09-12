@@ -15,6 +15,7 @@ except Exception:
 _gemini_client = None
 _gemini_models_working = []
 _gemini_lock = None
+_norm_cache = {}
 
 def _get_lock():
     global _gemini_lock
@@ -224,9 +225,9 @@ def _parse_gemini_json(text):
     except Exception:
         return None
 
-def _normalize_ar(s):
+def _base_normalize(s):
     s = safe_str(s, "").strip().lower()
-    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ٱ", "ا")
     s = s.replace("ة", "ه")
     s = s.replace("ى", "ي")
     s = s.replace("ؤ", "و").replace("ئ", "ي")
@@ -236,8 +237,40 @@ def _normalize_ar(s):
     s = s.strip()
     if s.startswith("ال") and len(s) > 3:
         s = s[2:]
-    s = s.strip()
-    return s
+    return s.strip()
+
+def _normalize_variants(word):
+    if not word:
+        return set()
+    cached = _norm_cache.get(word)
+    if cached is not None:
+        return cached
+    base = _base_normalize(word)
+    variants = {base}
+    pairs = [
+        ("ض", "ظ"),
+        ("ذ", "ز"),
+        ("ث", "س"),
+        ("ط", "ت"),
+        ("چ", "ج"),
+        ("گ", "ك"),
+        ("پ", "ب"),
+        ("ڤ", "ف"),
+        ("ک", "ك"),
+    ]
+    for a, b in pairs:
+        current = list(variants)
+        for v in current:
+            if a in v:
+                variants.add(v.replace(a, b))
+            if b in v:
+                variants.add(v.replace(b, a))
+    result = frozenset(variants)
+    _norm_cache[word] = result
+    return result
+
+def _normalize_ar(s):
+    return _base_normalize(s)
 
 def _levenshtein(a, b):
     if a == b:
@@ -316,6 +349,15 @@ def _fuzzy_match(answer_norm, bank_norm):
         return True
     return False
 
+def _variants_match(answer_word, bank_word):
+    a_vars = _normalize_variants(answer_word)
+    b_vars = _normalize_variants(bank_word)
+    for av in a_vars:
+        for bv in b_vars:
+            if _fuzzy_match(av, bv):
+                return True
+    return False
+
 def _check_against_bank(question, answers_list):
     try:
         from answers_bank import ANSWERS_BANK
@@ -325,16 +367,14 @@ def _check_against_bank(question, answers_list):
     if not raw:
         return None, None, False
     bank = [b.strip() for b in raw.split(",") if b.strip()]
-    bank_norm = [_normalize_ar(b) for b in bank]
     correct_answers = []
     unknown_answers = []
     for a in answers_list:
-        n = _normalize_ar(a)
-        if len(n) < 2:
+        if len(a.strip()) < 2:
             continue
         matched = False
-        for b in bank_norm:
-            if _fuzzy_match(n, b):
+        for b in bank:
+            if _variants_match(a, b):
                 matched = True
                 break
         if matched:
@@ -370,11 +410,11 @@ async def _verify_unknown_with_ai(question, unknown_answers):
         if "|" not in line:
             continue
         parts = line.split("|", 1)
-        key = _normalize_ar(parts[0])
+        key = _base_normalize(parts[0])
         val = parts[1].strip().lower()
         is_yes = val in ("نعم", "yes", "true", "1", "صح", "صحيح")
         for a in unknown_answers:
-            if _normalize_ar(a) == key:
+            if _base_normalize(a) == key:
                 result[a] = is_yes
                 break
     for a in unknown_answers:
