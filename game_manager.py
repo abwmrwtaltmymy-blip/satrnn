@@ -1,9 +1,6 @@
 import random
-import asyncio
 import time
 from questions import QUESTIONS
-from database import add_points, update_win_loss
-from utils import evaluate_answers_with_ai
 
 internal_games = {}
 tournaments = {}
@@ -19,7 +16,7 @@ def get_question():
     return random.choice(QUESTIONS)
 
 def initial_lives(team_size):
-    if team_size <= 2:
+    if team_size <= 3:
         return 3
     return team_size
 
@@ -56,13 +53,32 @@ class InternalGame:
         self.team2_label = ""
         self.team1_played = []
         self.team2_played = []
-        self.first_bidder_team = 1
+        self.first_bidder_team = random.choice([1, 2])
+        self.forced = False
+        self.round_stats = []
+        self.start_time = None
+        self.end_time = None
 
     def split_teams(self):
         shuffled = self.players[:]
         random.shuffle(shuffled)
         self.team1 = shuffled[:self.team_size]
         self.team2 = shuffled[self.team_size:self.team_size * 2]
+
+    def swap_first_bidder(self):
+        self.first_bidder_team = 2 if self.first_bidder_team == 1 else 1
+
+    def record_round(self, round_num, bidder_id, bidder_team, bid, success, answers_count, duration, forced):
+        self.round_stats.append({
+            "round": round_num,
+            "bidder_id": bidder_id,
+            "bidder_team": bidder_team,
+            "bid": bid,
+            "success": success,
+            "answers_count": answers_count,
+            "duration": duration,
+            "forced": forced,
+        })
 
 class Tournament:
     def __init__(self, group1_id, group1_name, group2_id, group2_name, squad=5):
@@ -95,7 +111,12 @@ class Tournament:
         self.consecutive_timeouts = 0
         self.team1_played = []
         self.team2_played = []
-        self.first_bidder_team = 1
+        self.first_bidder_team = random.choice([1, 2])
+        self.forced = False
+        self.round_stats = []
+        self.start_time = None
+        self.end_time = None
+        self.nom_msg_ids = {group1_id: None, group2_id: None}
 
     def resolve_top(self, gid):
         lst = []
@@ -106,3 +127,18 @@ class Tournament:
 
     def both_groups(self):
         return [self.group1_id, self.group2_id]
+
+    def swap_first_bidder(self):
+        self.first_bidder_team = 2 if self.first_bidder_team == 1 else 1
+
+    def record_round(self, round_num, bidder_id, bidder_team, bid, success, answers_count, duration, forced):
+        self.round_stats.append({
+            "round": round_num,
+            "bidder_id": bidder_id,
+            "bidder_team": bidder_team,
+            "bid": bid,
+            "success": success,
+            "answers_count": answers_count,
+            "duration": duration,
+            "forced": forced,
+        })
