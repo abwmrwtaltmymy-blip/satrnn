@@ -48,10 +48,10 @@ def _init_gemini():
         print("Gemini key missing")
         return False
     models_to_try = [
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
+        "gemini-2.5-flash",
         "gemini-2.5-flash-latest",
         "gemini-flash-latest",
+        "gemini-2.0-flash",
         "gemini-2.5-pro",
         "gemini-pro-latest",
     ]
@@ -88,7 +88,7 @@ def _init_gemini():
     print("Gemini ready with:", working[0], "total:", len(working))
     return True
 
-async def _gemini_generate(prompt, max_retries=3):
+async def _gemini_generate(prompt, max_retries=4):
     if not _init_gemini():
         return None
     async with _get_lock():
@@ -106,11 +106,14 @@ async def _gemini_generate(prompt, max_retries=3):
             except Exception as e:
                 err = str(e)
                 if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
-                    wait = (attempt + 1) * 1.5
+                    wait = (attempt + 1) * 2.0
                     await asyncio.sleep(wait)
                     continue
                 if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
+                    continue
+                if "500" in err or "INTERNAL" in err:
+                    await asyncio.sleep(1.5)
                     continue
                 print("Gemini generate failed:", model_name, "->", err[:150])
                 break
@@ -258,8 +261,10 @@ def _levenshtein(a, b):
 
 def _allowed_errors(word):
     n = len(word)
-    if n <= 3:
+    if n <= 2:
         return 0
+    if n <= 3:
+        return 1
     if n <= 5:
         return 1
     if n <= 8:
@@ -269,7 +274,7 @@ def _allowed_errors(word):
 def _word_match(answer_norm, bank_norm):
     a_words = answer_norm.split()
     b_words = bank_norm.split()
-    if len(b_words) == 1 and len(b_words[0]) >= 4:
+    if len(b_words) == 1 and len(b_words[0]) >= 3:
         for aw in a_words:
             if aw == b_words[0]:
                 return True
@@ -437,6 +442,88 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         return True, "تم قبول " + str(count_int) + " إجابة صحيحة من أصل " + str(expected_count) + ". " + reason
     return False, "عدد الإجابات الصحيحة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
 
+async def evaluate_winner_points(stats, winner_label, loser_label, team_size):
+    fallback = 350
+    total_rounds = len(stats)
+    if total_rounds == 0:
+        return fallback, "فوز بدون جولات مسجلة."
+    wins = 0
+    losses = 0
+    total_answers = 0
+    total_duration = 0
+    total_bid = 0
+    forced_count = 0
+    for r in stats:
+        if r["success"]:
+            wins += 1
+        else:
+            losses += 1
+        total_answers += r["answers_count"]
+        total_duration += r["duration"]
+        total_bid += r["bid"]
+        if r["forced"]:
+            forced_count += 1
+    avg_duration = total_duration / total_rounds if total_rounds > 0 else 30
+    avg_bid = total_bid / total_rounds if total_rounds > 0 else 0
+    avg_answers = total_answers / total_rounds if total_rounds > 0 else 0
+
+    if not _init_gemini():
+        points = 350
+        points += min(80, wins * 12)
+        points += min(40, int(avg_answers * 4))
+        points += min(30, int((30 - avg_duration) * 2)) if avg_duration < 30 else 0
+        if points > 500:
+            points = 500
+        if points < 350:
+            points = 350
+        return points, "تقييم تلقائي حسب الأداء."
+
+    prompt = (
+        "أنت مقيّم ذكي لمباراة في لعبة تحدي الثلاثين ثانية.\n"
+        "المطلوب: أعطِ الفائز نقاطًا بين 350 و 500 حسب أدائه الفعلي.\n\n"
+        "بيانات المباراة:\n"
+        "عدد الجولات الكلي: " + str(total_rounds) + "\n"
+        "جولات فاز بها: " + str(wins) + "\n"
+        "جولات خسرها: " + str(losses) + "\n"
+        "مجموع الإجابات الصحيحة: " + str(total_answers) + "\n"
+        "متوسط الإجابات في الجولة: " + str(round(avg_answers, 1)) + "\n"
+        "متوسط سرعة الإجابة بالثواني: " + str(round(avg_duration, 1)) + "\n"
+        "متوسط المزايدة: " + str(round(avg_bid, 1)) + "\n"
+        "عدد الجولات اللي تم فيها إجبار الخصم: " + str(forced_count) + "\n"
+        "حجم الفريق: " + str(team_size) + "\n"
+        "اسم الفائز: " + str(winner_label) + "\n"
+        "اسم الخاسر: " + str(loser_label) + "\n\n"
+        "قواعد:\n"
+        "1. الفوز الساحق = نقاط أعلى (قريب من 500).\n"
+        "2. الفوز الضعيف = نقاط أقل (قريب من 350).\n"
+        "3. السرعة العالية ترفع النقاط.\n"
+        "4. كثرة الإجابات الصحيحة ترفع النقاط.\n"
+        "5. كثرة الأرواح المتبقية ترفع النقاط.\n"
+        "6. الإجبار الكثير يخفض النقاط قليلاً.\n"
+        "7. لا تتجاوز 500 ولا تقل عن 350.\n\n"
+        "أعد JSON فقط:\n"
+        "{\"points\": رقم, \"reason\": \"سبب مختصر بالعربية بدون مقدمات\"}"
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        points = 350 + min(80, wins * 12) + min(40, int(avg_answers * 4))
+        if points > 500:
+            points = 500
+        return points, "تقييم تلقائي حسب الأداء."
+    data = _parse_gemini_json(text)
+    if not data:
+        return 400, "تقييم تلقائي."
+    try:
+        points = int(data.get("points", 400))
+    except Exception:
+        points = 400
+    if points < 350:
+        points = 350
+    if points > 500:
+        points = 500
+    reason = safe_str(data.get("reason"), "أداء جيد.")
+    return points, reason
+
 async def ai_generate_answers(question, target_count, difficulty="medium"):
     question = safe_str(question, "")
     accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
@@ -559,6 +646,8 @@ def safe_execute(func):
             except Exception:
                 pass
         except errors.MessageNotModifiedError:
+            pass
+        except asyncio.CancelledError:
             pass
         except Exception as e:
             try:
