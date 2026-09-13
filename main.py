@@ -433,7 +433,7 @@ async def cb_promo_info(event):
     except Exception:
         await event.reply(text, buttons=kb)
 
-  @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
+@client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
 async def cmd_start_game(event):
     if event.is_private:
