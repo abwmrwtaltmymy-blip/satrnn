@@ -467,6 +467,64 @@ def _check_against_bank(question, answers_list):
             unknown_answers.append(a)
     return correct_answers, unknown_answers, True
 
+
+
+def diagnose_gemini():
+    result = {
+        "key_exists": False,
+        "key_length": 0,
+        "key_start": "",
+        "client_created": False,
+        "models_tested": [],
+        "errors": [],
+        "working": False,
+    }
+    try:
+        from config import GEMINI_API_KEY as _k
+        if _k:
+            result["key_exists"] = True
+            result["key_length"] = len(_k)
+            result["key_start"] = _k[:8] + "..." if len(_k) > 8 else _k
+    except Exception as e:
+        result["errors"].append("استيراد المفتاح: " + str(e)[:150])
+        return result
+    if not result["key_exists"]:
+        result["errors"].append("GEMINI_API_KEY غير موجود في متغيرات البيئة.")
+        return result
+    if result["key_length"] < 20:
+        result["errors"].append("طول المفتاح قصير جداً (" + str(result["key_length"]) + " حرف).")
+        return result
+    if not _genai_available:
+        result["errors"].append("مكتبة google-genai غير مثبتة.")
+        return result
+    try:
+        client = genai.Client(api_key=_k)
+        result["client_created"] = True
+    except Exception as e:
+        result["errors"].append("فشل إنشاء client: " + str(e)[:200])
+        return result
+    models_to_try = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-latest",
+        "gemini-flash-latest",
+        "gemini-2.0-flash",
+        "gemini-2.5-pro",
+        "gemini-pro-latest",
+    ]
+    for model_name in models_to_try:
+        try:
+            test = client.models.generate_content(model=model_name, contents="قل مرحبا")
+            if test and test.text:
+                result["models_tested"].append(model_name + ": يعمل")
+                result["working"] = True
+            else:
+                result["models_tested"].append(model_name + ": رد فاضي")
+        except Exception as e:
+            err = str(e)[:200]
+            result["models_tested"].append(model_name + ": " + err)
+    return result
+
+
 async def _verify_unknown_with_ai(question, unknown_answers):
     if not unknown_answers:
         return {}
