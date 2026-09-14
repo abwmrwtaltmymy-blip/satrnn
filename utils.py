@@ -20,8 +20,7 @@ _norm_cache = {}
 ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
 REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
 LINK_OR_MENTION_RE = re.compile(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|\.io|\.me|@", re.IGNORECASE)
-LATIN_ONLY_RE = re.compile(r"^[A-Za-z0-9_\.\-\s]+$")
-PHONE_ANY_RE = re.compile(r"^\+?[\d\s\-\(\)]{7,}$")
+PHONE_ONLY_RE = re.compile(r"^\+?[\d\s\-\(\)]{7,}$")
 
 KNOWN_SHORT_WORDS = {
     "لا", "نعم", "هو", "هي", "هم", "من", "في", "على", "عن", "الى", "إلى",
@@ -84,9 +83,7 @@ def _is_bad_name(name):
     low = t.lower()
     if LINK_OR_MENTION_RE.search(low):
         return True
-    if PHONE_ANY_RE.match(t):
-        return True
-    if LATIN_ONLY_RE.match(t):
+    if PHONE_ONLY_RE.match(t):
         return True
     for w in BAD_WORDS:
         if w and w in low:
