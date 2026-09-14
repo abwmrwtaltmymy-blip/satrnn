@@ -3114,6 +3114,47 @@ async def cmd_restart_auto_off(event):
     RESTART_AUTO["enabled"] = False
     await event.reply("تم إيقاف إعادة التشغيل التلقائي.")
 
+
+@client.on(events.NewMessage(pattern=r"^/file_info$", from_users=DEV_ID))
+@safe_execute
+async def cmd_file_info(event):
+    lines = ["معلومات الملفات", ""]
+    total_size = 0
+    total_lines = 0
+    for f in EDITABLE_FILES:
+        if not os.path.exists(f):
+            lines.append(f + " | غير موجود")
+            continue
+        try:
+            size = os.path.getsize(f)
+            total_size += size
+            mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(f)))
+            with open(f, "r", encoding="utf-8") as fh:
+                content = fh.read()
+            line_count = content.count("\n") + 1
+            total_lines += line_count
+            lines.append(
+                f + "\n"
+                "  الحجم: " + _file_size_str(f) + "\n"
+                "  الأسطر: " + str(line_count) + "\n"
+                "  آخر تعديل: " + mtime
+            )
+        except Exception as e:
+            lines.append(f + " | خطأ: " + str(e)[:80])
+    lines.append("")
+    lines.append("الإجمالي:")
+    if total_size < 1024:
+        total_size_str = str(total_size) + "B"
+    elif total_size < 1024 * 1024:
+        total_size_str = str(round(total_size / 1024, 1)) + "KB"
+    else:
+        total_size_str = str(round(total_size / (1024 * 1024), 2)) + "MB"
+    lines.append("  الحجم الكلي: " + total_size_str)
+    lines.append("  عدد الأسطر الكلي: " + str(total_lines))
+    lines.append("  عدد الملفات: " + str(len([f for f in EDITABLE_FILES if os.path.exists(f)])))
+    text = "\n".join(lines)[:4000]
+    await event.reply(text)
+  
 print("Bot is running...")
 client.run_until_disconnected()
 
