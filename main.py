@@ -17,7 +17,9 @@ from utils import (safe_execute, clean_name, clean_name_with_id, name_has_bad_wo
                    require_subscription, evaluate_answers_with_ai, evaluate_winner_points,
                    translate_error, ai_generate_answers, ai_generate_bid, safe_str,
                    safe_display_name, ai_smart_bid, ai_react_to_bid, ai_human_like_delay,
-                   ai_comment_on_round, ai_diagnose_issue)
+                   ai_comment_on_round, ai_diagnose_issue,
+                   extract_function_code, replace_function_code,
+                   _parse_gemini_json, _gemini_generate)
 from game_manager import (internal_games, tournaments, private_sessions, matchmaking_pool,
                           InternalGame, Tournament, DuelGame, AIGame, get_question)
 
