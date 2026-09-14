@@ -1098,3 +1098,62 @@ def diagnose_gemini():
         except Exception as e:
             result["models_tested"].append(name + ": " + str(e)[:100])
     return result
+
+
+async def ai_suggest_function_fix(filename, function_name, issue_description, file_content):
+    if not _init_gemini():
+        return None, "الذكاء الاصطناعي غير متاح."
+    prompt = (
+        "أنت خبير Python وبوتات Telethon.\n"
+        "المستخدم يريد تعديل دالة معينة في ملف.\n\n"
+        "اسم الملف: " + filename + "\n"
+        "اسم الدالة: " + function_name + "\n"
+        "وصف المشكلة/التعديل: " + issue_description + "\n\n"
+        "الكود الحالي للدالة:\n"
+        "```python\n" + function_name + "\n```\n\n"
+        "المطلوب: أعد الكود الجديد للدالة فقط، كاملاً من def إلى آخر سطر فيها، بدون أي شرح أو تعليقات.\n"
+        "لا تكتب أي شيء آخر غير الكود.\n\n"
+        "أعد النتيجة بصيغة JSON فقط:\n"
+        "{\"function_code\": \"كود الدالة الجديد\", \"explanation\": \"شرح مختصر\"}"
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        return None, "تعذر الاتصال بالذكاء الاصطناعي."
+    data = _parse_gemini_json(text)
+    if not data:
+        return None, "لم يتمكن التحليل من إرجاع JSON."
+    code = safe_str(data.get("function_code"), "")
+    explanation = safe_str(data.get("explanation"), "")
+    if not code:
+        return None, "لم يتم إرجاع كود."
+    return code, explanation
+
+
+def extract_function_code(file_content, function_name):
+    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    match = re.search(pattern, file_content)
+    if match:
+        return match.group(1)
+    pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    match2 = re.search(pattern2, file_content, re.MULTILINE)
+    if match2:
+        return match2.group(1)
+    return None
+
+
+def replace_function_code(file_content, function_name, new_code):
+    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    new_content, count = re.subn(pattern, "\n" + new_code.strip() + "\n", file_content, count=1)
+    if count == 0:
+        pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+        new_content, count = re.subn(pattern2, new_code.strip() + "\n", file_content, count=1, flags=re.MULTILINE)
+    if count == 0:
+        return None
+    return new_content
+
+
+def list_functions_in_file(file_content):
+    functions = []
+    for m in re.finditer(r"^\s*(async\s+)?def\s+(\w+)\s*\(", file_content, re.MULTILINE):
+        functions.append(m.group(2))
+    return functions
