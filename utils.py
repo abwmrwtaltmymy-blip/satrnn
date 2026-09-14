@@ -91,6 +91,7 @@ def _is_bad_name(name):
     return False
 
 def _init_gemini():
+def _init_gemini():
     global _gemini_client, _gemini_models_working
     if _gemini_client is not None and _gemini_models_working:
         return True
@@ -100,38 +101,47 @@ def _init_gemini():
     if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 20:
         print("Gemini key missing")
         return False
-    models_to_try = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-latest",
-        "gemini-flash-latest",
-        "gemini-2.0-flash",
-        "gemini-2.5-pro",
-        "gemini-pro-latest",
-    ]
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
         print("Gemini client failed:", str(e)[:200])
         return False
+    available = []
+    try:
+        for m in client.models.list():
+            name = m.name
+            if name.startswith("models/"):
+                name = name[len("models/"):]
+            available.append(name)
+    except Exception as e:
+        print("Gemini list failed:", str(e)[:200])
+        return False
+    if not available:
+        print("Gemini: no models returned")
+        return False
+    print("Gemini models available:", available[:20])
+    candidates = []
+    for name in available:
+        low = name.lower()
+        if "flash" in low and "vision" not in low and "embedding" not in low:
+            candidates.append(name)
+    if not candidates:
+        for name in available:
+            low = name.lower()
+            if "pro" in low and "vision" not in low and "embedding" not in low:
+                candidates.append(name)
+    if not candidates:
+        candidates = available[:5]
     working = []
-    for model_name in models_to_try:
+    for name in candidates:
         try:
-            test = client.models.generate_content(
-                model=model_name,
-                contents="قل مرحبا"
-            )
+            test = client.models.generate_content(model=name, contents="hi")
             if test and test.text:
-                working.append(model_name)
-                print("Gemini OK:", model_name)
+                working.append(name)
+                print("Gemini OK:", name)
         except Exception as e:
             err = str(e)[:150]
-            if "404" in err or "NOT_FOUND" in err:
-                print("Gemini skip (not available):", model_name)
-            elif "503" in err or "UNAVAILABLE" in err:
-                print("Gemini busy but usable:", model_name)
-                working.append(model_name)
-            else:
-                print("Gemini failed:", model_name, "->", err)
+            print("Gemini test failed:", name, "->", err)
             continue
     if not working:
         print("No working Gemini model found")
@@ -846,6 +856,7 @@ def diagnose_gemini():
         "key_length": 0,
         "key_start": "",
         "client_created": False,
+        "models_available": [],
         "models_tested": [],
         "errors": [],
         "working": False,
@@ -874,14 +885,26 @@ def diagnose_gemini():
     except Exception as e:
         result["errors"].append("فشل client: " + str(e)[:200])
         return result
-    for model_name in ["gemini-2.0-flash", "gemini-2.5-flash"]:
+    try:
+        for m in client.models.list():
+            name = m.name
+            if name.startswith("models/"):
+                name = name[len("models/"):]
+            result["models_available"].append(name)
+    except Exception as e:
+        result["errors"].append("فشل جلب القائمة: " + str(e)[:200])
+        return result
+    for name in result["models_available"][:15]:
+        low = name.lower()
+        if "embedding" in low or "vision" in low and "flash" not in low:
+            continue
         try:
-            test = client.models.generate_content(model=model_name, contents="hi")
+            test = client.models.generate_content(model=name, contents="hi")
             if test and test.text:
-                result["models_tested"].append(model_name + ": يعمل")
+                result["models_tested"].append(name + ": يعمل")
                 result["working"] = True
             else:
-                result["models_tested"].append(model_name + ": رد فاضي")
+                result["models_tested"].append(name + ": رد فاضي")
         except Exception as e:
-            result["models_tested"].append(model_name + ": " + str(e)[:150])
+            result["models_tested"].append(name + ": " + str(e)[:100])
     return result
