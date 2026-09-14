@@ -17,7 +17,7 @@ from game_manager import (internal_games, tournaments, private_sessions, matchma
 
 init_db()
 
-client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
+client = TelegramClient("boton", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 ai_games = {}
 _last_join_event = {}
