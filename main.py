@@ -1,4 +1,4 @@
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events, Button, functions
 import asyncio
 import time
 import random
@@ -20,6 +20,7 @@ init_db()
 client = TelegramClient("bot_session", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 ai_games = {}
+_last_join_event = {}
 
 TEAM_NAMES = [
     ("فريق MBC3", "فريق سبيستون"),
@@ -266,6 +267,21 @@ async def send_main_menu(chat_id):
     ]
     await client.send_message(chat_id, text, buttons=kb)
 
+def build_dev_panel_kb():
+    return [
+        [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
+         Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
+        [Button.inline("اختبار الإشعار", b"dev_notif_test")],
+        [Button.inline("إحصائيات البوت", b"dev_stats")],
+        [Button.inline("فحص الأخطاء", b"dev_check_errors")],
+        [Button.inline("معلومات المطور", b"dev_owner_info")],
+        [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
+        [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
+        [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
+        [Button.inline("تعليمات الحظر", b"dev_ban_help")],
+        [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
+    ]
+
 async def send_dev_panel(user_id):
     val = get_setting("dev_notifications", "1")
     status = "مفعلة" if val == "1" else "متوقفة"
@@ -274,19 +290,8 @@ async def send_dev_panel(user_id):
         "حالة الإشعارات: " + status + "\n\n"
         "استعمل الأزرار التالية للتحكم."
     )
-    kb = [
-        [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
-         Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
-        [Button.inline("اختبار الإشعار", b"dev_notif_test")],
-        [Button.inline("إحصائيات البوت", b"dev_stats")],
-        [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
-        [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
-        [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
-        [Button.inline("تعليمات الحظر", b"dev_ban_help")],
-        [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
-    ]
     try:
-        await client.send_message(user_id, text, buttons=kb)
+        await client.send_message(user_id, text, buttons=build_dev_panel_kb())
     except Exception:
         pass
 
@@ -298,6 +303,12 @@ async def on_group_join(event):
         return
     if event.user_id != me.id:
         return
+    now = time.time()
+    key = (event.chat_id, me.id)
+    last = _last_join_event.get(key, 0)
+    if now - last < 10:
+        return
+    _last_join_event[key] = now
     chat = await event.get_chat()
     chat_title = safe_str(getattr(chat, "title", ""), "")
     if name_has_bad_word(chat_title):
@@ -476,6 +487,7 @@ async def cb_promo_info(event):
         await event.edit(text, buttons=kb)
     except Exception:
         await event.reply(text, buttons=kb)
+
 
 @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
@@ -877,15 +889,6 @@ async def join_timeout_internal(chat_id):
     await delete_tracked(g)
     try:
         await client.send_message(chat_id, "تم إلغاء التحدي لعدم اكتمال العدد خلال دقيقتين.")
-    except Exception:
-        pass
-
-async def delete_last_bot_message(user_id):
-    try:
-        me = await client.get_me()
-        msgs = await client.get_messages(user_id, limit=1, from_user=me)
-        if msgs:
-            await client.delete_messages(user_id, msgs[0].id)
     except Exception:
         pass
 
@@ -2355,6 +2358,46 @@ async def cmd_dev(event):
     except Exception:
         pass
 
+@client.on(events.NewMessage(pattern=r"^/dev_info$"))
+@safe_execute
+async def cmd_dev_info(event):
+    if not DEV_ID:
+        return await event.reply("DEV_ID غير محدد.")
+    try:
+        ent = await client.get_entity(DEV_ID)
+    except Exception as e:
+        return await event.reply("تعذر جلب بيانات المطور: " + str(e)[:100])
+    first = safe_str(getattr(ent, "first_name", ""), "")
+    last = safe_str(getattr(ent, "last_name", ""), "")
+    full = (first + " " + last).strip() or "المطور"
+    username = getattr(ent, "username", None)
+    user_id = getattr(ent, "id", DEV_ID)
+    lines = ["المطور"]
+    lines.append("الاسم: " + full)
+    if username:
+        lines.append("اليوزر: @" + username)
+    lines.append("الآيدي: " + str(user_id))
+    link = "tg://user?id=" + str(user_id)
+    kb = [[Button.url("افتح حساب المطور", link)]]
+    photo = None
+    try:
+        photo = await client.download_profile_photo(ent, file=bytes)
+    except Exception:
+        photo = None
+    try:
+        if photo:
+            import io
+            bio = io.BytesIO(photo)
+            bio.name = "dev.jpg"
+            await client.send_file(event.chat_id, bio, caption="\n".join(lines), buttons=kb)
+        else:
+            await event.reply("\n".join(lines), buttons=kb)
+    except Exception:
+        try:
+            await event.reply("\n".join(lines), buttons=kb)
+        except Exception:
+            pass
+
 @client.on(events.NewMessage(pattern=r"^/broadcast_groups (.+)", from_users=DEV_ID))
 @safe_execute
 async def cmd_broadcast_groups(event):
@@ -2476,20 +2519,6 @@ async def cmd_list_subs(event):
         lines.append(safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
     await event.reply("\n".join(lines))
 
-def build_dev_panel_kb():
-    return [
-        [Button.inline("تشغيل إشعارات المطور", b"dev_notif_on"),
-         Button.inline("إيقاف إشعارات المطور", b"dev_notif_off")],
-        [Button.inline("اختبار الإشعار", b"dev_notif_test")],
-        [Button.inline("إحصائيات البوت", b"dev_stats")],
-        [Button.inline("فحص الأخطاء", b"dev_check_errors")],
-        [Button.inline("قائمة قنوات الاشتراك الإجباري", b"dev_list_subs")],
-        [Button.inline("قائمة الكروبات المحظورة", b"dev_list_banned")],
-        [Button.inline("تعليمات الإذاعة", b"dev_broadcast_help")],
-        [Button.inline("تعليمات الحظر", b"dev_ban_help")],
-        [Button.inline("تعليمات الاشتراك", b"dev_sub_help")],
-    ]
-
 async def run_self_check():
     issues = []
     try:
@@ -2507,7 +2536,7 @@ async def run_self_check():
                 from utils import _init_gemini
                 ok = _init_gemini()
                 if not ok:
-                    issues.append("Gemini لا يعمل حاليًا (المفتاح غير صالح أو الشبكة).")
+                    issues.append("Gemini لا يعمل حاليًا.")
             except Exception as e:
                 issues.append("فحص Gemini: " + str(e)[:100])
     except Exception as e:
@@ -2522,21 +2551,15 @@ async def run_self_check():
         needed = ["groups", "players", "users", "banned_groups", "force_subs", "settings"]
         for t in needed:
             if t not in tables:
-                issues.append("جدول ناقص في قاعدة البيانات: " + t)
+                issues.append("جدول ناقص: " + t)
     except Exception as e:
         issues.append("فحص قاعدة البيانات: " + str(e)[:150])
-    try:
-        if not DEV_ID:
-            issues.append("DEV_ID غير محدد.")
-    except Exception:
-        pass
     try:
         active_internal = len(internal_games)
         active_tournaments = len(tournaments)
         active_ai = len(ai_games)
         active_sessions = len(private_sessions)
-    except Exception as e:
-        issues.append("فحص الألعاب النشطة: " + str(e)[:100])
+    except Exception:
         active_internal = 0
         active_tournaments = 0
         active_ai = 0
@@ -2561,7 +2584,7 @@ async def cb_dev_check_errors(event):
     await event.answer("جاري الفحص...")
     try:
         issues, stats = await run_self_check()
-    except Exception as e:
+    except Exception:
         await event.answer("فشل الفحص.", alert=True)
         return
     lines = ["فحص الأخطاء"]
@@ -2576,7 +2599,7 @@ async def cb_dev_check_errors(event):
     lines.append("داخلية: " + str(stats["internal"]))
     lines.append("كروبين: " + str(stats["tournaments"]))
     lines.append("AI: " + str(stats["ai"]))
-    lines.append("جلسات خاصة: " + str(stats["sessions"]))
+    lines.append("جلسات: " + str(stats["sessions"]))
     lines.append("قائمة الانتظار: " + str(stats["pool"]))
     text = "\n".join(lines)
     kb = [[Button.inline("رجوع", b"dev_back")]]
@@ -2585,6 +2608,39 @@ async def cb_dev_check_errors(event):
     except Exception:
         try:
             await event.reply(text, buttons=kb)
+        except Exception:
+            pass
+
+@client.on(events.CallbackQuery(data=b"dev_owner_info"))
+@safe_execute
+async def cb_dev_owner_info(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    if not DEV_ID:
+        return
+    try:
+        ent = await client.get_entity(DEV_ID)
+    except Exception:
+        return
+    first = safe_str(getattr(ent, "first_name", ""), "")
+    last = safe_str(getattr(ent, "last_name", ""), "")
+    full = (first + " " + last).strip() or "المطور"
+    username = getattr(ent, "username", None)
+    user_id = getattr(ent, "id", DEV_ID)
+    lines = ["المطور"]
+    lines.append("الاسم: " + full)
+    if username:
+        lines.append("اليوزر: @" + username)
+    lines.append("الآيدي: " + str(user_id))
+    link = "tg://user?id=" + str(user_id)
+    kb = [[Button.url("افتح حساب المطور", link)],
+          [Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit("\n".join(lines), buttons=kb)
+    except Exception:
+        try:
+            await event.reply("\n".join(lines), buttons=kb)
         except Exception:
             pass
 
@@ -2651,7 +2707,7 @@ async def cb_dev_list_subs(event):
     else:
         lines = ["قنوات الاشتراك الإجباري:"]
         for s in subs:
-            lines.append(safe_str(s["username"], "") + " (وضع الطلب: " + str(s["is_request_mode"]) + ")")
+            lines.append(safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
         text = "\n".join(lines)
     kb = [[Button.inline("رجوع", b"dev_back")]]
     try:
