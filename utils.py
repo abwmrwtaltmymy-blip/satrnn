@@ -91,7 +91,6 @@ def _is_bad_name(name):
     return False
 
 def _init_gemini():
-def _init_gemini():
     global _gemini_client, _gemini_models_working
     if _gemini_client is not None and _gemini_models_working:
         return True
