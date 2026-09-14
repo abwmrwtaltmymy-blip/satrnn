@@ -119,9 +119,13 @@ def _init_gemini():
         print("Gemini: no models returned")
         return False
     print("Gemini models available:", available[:20])
+    
     candidates = []
     for name in available:
         low = name.lower()
+        # استثناء الموديلات غير المتاحة لحسابك (مثل gemini-2.5)
+        if low.startswith("gemini-2."):
+            continue
         if "flash" in low and "vision" not in low and "embedding" not in low:
             candidates.append(name)
     if not candidates:
@@ -131,6 +135,7 @@ def _init_gemini():
                 candidates.append(name)
     if not candidates:
         candidates = available[:5]
+        
     working = []
     for name in candidates:
         try:
@@ -172,7 +177,7 @@ async def _gemini_generate(prompt, max_retries=4):
                     await asyncio.sleep(wait)
                     continue
                 if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5)
                     continue
                 if "500" in err or "INTERNAL" in err:
                     await asyncio.sleep(1.5)
