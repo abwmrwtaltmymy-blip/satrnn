@@ -96,12 +96,14 @@ async def notify_dev_user_start(user):
     except Exception:
         pass
 
+
 async def cancel_round_tasks(game_obj):
     if game_obj is None:
         return
+    current = asyncio.current_task()
     for attr in ("bidding_task", "answer_task", "opponent_timeout_task", "answer_watcher_task", "opponent_task"):
         t = getattr(game_obj, attr, None)
-        if t:
+        if t and t != current:
             try:
                 t.cancel()
             except Exception:
@@ -115,24 +117,6 @@ async def cancel_round_tasks(game_obj):
     except Exception:
         pass
 
-async def cancel_tasks(game_obj):
-    await cancel_round_tasks(game_obj)
-
-async def send_to_group(game_obj, chat_id, text, buttons=None, round_level=False):
-    try:
-        msg = await client.send_message(chat_id, text, buttons=buttons)
-    except Exception:
-        return None
-    if game_obj is not None:
-        if not hasattr(game_obj, "tracked_messages") or game_obj.tracked_messages is None:
-            game_obj.tracked_messages = []
-        game_obj.tracked_messages.append((chat_id, msg.id))
-        if round_level:
-            if not hasattr(game_obj, "round_messages") or game_obj.round_messages is None:
-                game_obj.round_messages = []
-            game_obj.round_messages.append((chat_id, msg.id))
-    await asyncio.sleep(0.2)
-    return msg
 
 async def delete_round_messages(game_obj):
     if game_obj is None or not hasattr(game_obj, "round_messages"):
@@ -1147,6 +1131,11 @@ async def bidding_timeout_internal(g, user_id):
         pass
     await asyncio.sleep(1)
     await advance_round_internal(g)
+        # في نهاية دالة bidding_timeout_internal
+    g.bidding_task = None
+    await asyncio.sleep(1)
+    await advance_round_internal(g)
+
 
 async def end_internal_no_winner(g):
     g.state = "done"
@@ -3157,4 +3146,3 @@ async def cmd_file_info(event):
   
 print("Bot is running...")
 client.run_until_disconnected()
-
