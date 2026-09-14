@@ -20,6 +20,8 @@ _norm_cache = {}
 ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
 REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
 LINK_OR_MENTION_RE = re.compile(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", re.IGNORECASE)
+LATIN_DIGIT_ONLY_RE = re.compile(r"^[A-Za-z0-9_\.\-\s]+$")
+
 KNOWN_SHORT_WORDS = {
     "لا", "نعم", "هو", "هي", "هم", "من", "في", "على", "عن", "الى", "إلى",
     "هذا", "هذه", "ذلك", "تلك", "التي", "الذي", "لكن", "ثم", "قد", "كان",
@@ -70,6 +72,23 @@ def is_gibberish(text):
             unique_ratio = len(set(w)) / len(w)
             if unique_ratio < 0.4:
                 return True
+    return False
+
+def _looks_like_username_or_link(text):
+    if not text:
+        return False
+    t = text.strip()
+    if not t:
+        return False
+    low = t.lower()
+    if LINK_OR_MENTION_RE.search(low):
+        return True
+    if LATIN_DIGIT_ONLY_RE.match(t):
+        return True
+    if low.startswith("t.me/") or low.startswith("telegram.me/"):
+        return True
+    if re.match(r"^\+?\d{7,}$", t):
+        return True
     return False
 
 def _init_gemini():
@@ -170,9 +189,9 @@ def clean_name(name, default_fallback=SAFE_FALLBACK):
     name = name.strip()
     if not name:
         return default_fallback
-    low = name.lower()
-    if LINK_OR_MENTION_RE.search(low):
+    if _looks_like_username_or_link(name):
         return default_fallback
+    low = name.lower()
     for w in BAD_WORDS:
         if w and w in low:
             return default_fallback
@@ -191,9 +210,9 @@ def name_has_bad_word(name):
             name = str(name)
         except Exception:
             return True
-    low = name.lower()
-    if LINK_OR_MENTION_RE.search(low):
+    if _looks_like_username_or_link(name):
         return True
+    low = name.lower()
     for w in BAD_WORDS:
         if w and w in low:
             return True
@@ -215,9 +234,9 @@ def safe_display_name(name, fallback="المجموعة"):
     name = name.strip()
     if not name:
         return fallback
-    low = name.lower()
-    if LINK_OR_MENTION_RE.search(low):
+    if _looks_like_username_or_link(name):
         return fallback
+    low = name.lower()
     for w in BAD_WORDS:
         if w and w in low:
             return fallback
