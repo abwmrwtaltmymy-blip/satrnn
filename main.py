@@ -3519,6 +3519,75 @@ async def cmd_ai_assist_cancel(event):
     await event.reply("تم الإلغاء.")
 
 
+def get_file_summary(content):
+    lines = content.split("\n")
+    summary = []
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("def ") or stripped.startswith("async def ") or stripped.startswith("class "):
+            summary.append(stripped.split("(")[0].strip())
+    return summary
+
+
+def find_relevant_functions(content, keywords):
+    if not keywords:
+        return content[:25000]
+    keywords_lower = [k.lower() for k in keywords.split()]
+    blocks = []
+    current_block = []
+    current_name = None
+    in_block = False
+    lines = content.split("\n")
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("def ") or stripped.startswith("async def ") or stripped.startswith("class "):
+            if in_block and current_block:
+                blocks.append((current_name, "\n".join(current_block)))
+            current_block = [line]
+            if stripped.startswith("class "):
+                current_name = stripped.split("(")[0].replace("class ", "").strip(":")
+            else:
+                name_part = stripped.replace("async def ", "").replace("def ", "")
+                current_name = name_part.split("(")[0].strip()
+            in_block = True
+        elif in_block:
+            current_block.append(line)
+            if stripped and not line.startswith(" ") and not line.startswith("\t") and not stripped.startswith("#"):
+                if not (stripped.startswith("def ") or stripped.startswith("async def ") or stripped.startswith("class ") or stripped.startswith("@")):
+                    if current_block:
+                        blocks.append((current_name, "\n".join(current_block[:-1])))
+                        current_block = []
+                        in_block = False
+                        current_name = None
+    if in_block and current_block:
+        blocks.append((current_name, "\n".join(current_block)))
+    relevant = []
+    for name, block in blocks:
+        if not name:
+            continue
+        block_lower = block.lower()
+        name_lower = name.lower()
+        score = 0
+        for kw in keywords_lower:
+            if kw in name_lower:
+                score += 3
+            if kw in block_lower:
+                score += 1
+        if score > 0:
+            relevant.append((score, name, block))
+    relevant.sort(key=lambda x: -x[0])
+    result = ""
+    total = 0
+    for score, name, block in relevant:
+        if total + len(block) > 22000:
+            break
+        result += "\n\n=== " + name + " ===\n" + block
+        total += len(block)
+    if not result:
+        result = content[:22000]
+    return result
+
+
 @client.on(events.NewMessage(func=lambda e: e.is_private and e.sender_id == DEV_ID and not e.text.startswith("/") and AI_ASSIST_STATE.get(e.sender_id, {}).get("mode") == "waiting"))
 @safe_execute
 async def ai_assist_receive_issue(event):
@@ -3529,8 +3598,9 @@ async def ai_assist_receive_issue(event):
     if not issue:
         return
     AI_ASSIST_STATE[event.sender_id] = {"mode": "processing"}
-    await event.reply("جاري قراءة الملفات والتحليل... قد يستغرق دقيقة.")
-    files_content = {}
+    await event.reply("جاري تحليل المشروع... قد يستغرق دقيقة أو دقيقتين.")
+    all_files_summary = ""
+    all_files_full = ""
     for f in EDITABLE_FILES:
         if f == "config.py":
             continue
@@ -3538,41 +3608,46 @@ async def ai_assist_receive_issue(event):
             continue
         try:
             with open(f, "r", encoding="utf-8") as fh:
-                files_content[f] = fh.read()[:5000]
+                content = fh.read()
         except Exception:
             continue
-    if not files_content:
-        AI_ASSIST_STATE.pop(event.sender_id, None)
-        return await event.reply("لم أتمكن من قراءة أي ملف.")
-    files_text = ""
-    for fname, content in files_content.items():
-        files_text += "\n\n=== " + fname + " ===\n" + content
+        size = len(content)
+        summary = get_file_summary(content)
+        all_files_summary += "\n\n### " + f + " (" + str(size) + " حرف)\n"
+        all_files_summary += "الدوال والكلاسات: " + ", ".join(summary[:40])
+        if size <= 25000:
+            all_files_full += "\n\n=== " + f + " (كامل) ===\n" + content
+        else:
+            relevant = find_relevant_functions(content, issue)
+            all_files_full += "\n\n=== " + f + " (الدوال ذات الصلة) ===\n" + relevant
+    if len(all_files_full) > 25000:
+        all_files_full = all_files_full[:25000]
     prompt = (
-        "أنت خبير Python وبوتات Telethon.\n"
+        "أنت خبير Python وبوتات Telethon محترف.\n"
         "المستخدم يريد تعديلاً أو يعاني من مشكلة في بوت تلغرام.\n\n"
         "وصف المستخدم:\n" + issue + "\n\n"
-        "هذه محتويات الملفات (مختصرة):\n" + files_text[:14000] + "\n\n"
+        "ملخص المشروع (جميع الملفات والدوال):\n" + all_files_summary[:5000] + "\n\n"
+        "الكود الكامل للدوال ذات الصلة:\n" + all_files_full + "\n\n"
         "المطلوب:\n"
-        "1. حدد الملف الذي به المشكلة أو يحتاج التعديل.\n"
-        "2. حدد الدالة المسؤولة.\n"
-        "3. أعد الكود الجديد للدالة كاملاً.\n"
-        "4. اشرح ما فعلت.\n\n"
+        "1. حدد الملف والدالة المسؤولة عن المشكلة.\n"
+        "2. أعد الكود الجديد للدالة كاملاً من def إلى نهايتها.\n"
+        "3. اشرح ما فعلت بشكل مختصر.\n"
+        "4. تأكد أن الكود الجديد متوافق مع باقي المشروع (لا يحذف دوالاً ضرورية).\n\n"
         "أعد JSON فقط بهذا الشكل:\n"
-        "{\"file\": \"اسم الملف\", \"function\": \"اسم الدالة\", \"new_code\": \"الكود الجديد للدالة كاملاً\", \"explanation\": \"شرح مختصر\"}"
+        "{\"file\": \"اسم الملف\", \"function\": \"اسم الدالة\", \"new_code\": \"الكود الجديد كاملاً\", \"explanation\": \"شرح مختصر\"}"
     )
     text = await _gemini_generate(prompt)
     if not text:
         AI_ASSIST_STATE.pop(event.sender_id, None)
         return await event.reply("فشل التحليل. حاول مرة أخرى.")
-    from utils import _parse_gemini_json, safe_str as _ss
     data = _parse_gemini_json(text)
     if not data:
         AI_ASSIST_STATE.pop(event.sender_id, None)
-        return await event.reply("فشل تحليل الرد.")
-    fname = _ss(data.get("file"), "").strip()
-    fn = _ss(data.get("function"), "").strip()
-    new_code = _ss(data.get("new_code"), "").strip()
-    explanation = _ss(data.get("explanation"), "").strip()
+        return await event.reply("فشل تحليل الرد.\n\nالرد كان:\n" + text[:500])
+    fname = safe_str(data.get("file"), "").strip()
+    fn = safe_str(data.get("function"), "").strip()
+    new_code = safe_str(data.get("new_code"), "").strip()
+    explanation = safe_str(data.get("explanation"), "").strip()
     if not fname or not fn or not new_code:
         AI_ASSIST_STATE.pop(event.sender_id, None)
         return await event.reply("لم يتم إرجاع بيانات كافية.\n\n" + text[:500])
