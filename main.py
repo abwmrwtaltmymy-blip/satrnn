@@ -2,6 +2,7 @@ from telethon import TelegramClient, events, Button
 import asyncio
 import time
 import random
+import re
 
 from config import API_ID, API_HASH, BOT_TOKEN, DEV_ID
 from database import (init_db, add_points, get_top, is_banned, ban_group, unban_group,
@@ -27,11 +28,31 @@ TEAM_NAMES = [
     ("فريق ماين كرافت", "فريق رزدنت ايفل"),
 ]
 
+ARABIC_WORD_RE = re.compile(r"[\u0600-\u06FF]{2,}")
+REPEAT_LETTER_RE = re.compile(r"(.)\1{2,}")
+
 def user_link(user_id, name):
     return "[" + name + "](tg://user?id=" + str(user_id) + ")"
 
 def pick_team_names():
     return random.choice(TEAM_NAMES)
+
+def looks_like_gibberish(text):
+    if not text or len(text.strip()) < 2:
+        return True
+    t = text.strip()
+    if REPEAT_LETTER_RE.search(t):
+        return True
+    words = ARABIC_WORD_RE.findall(t)
+    if not words:
+        return True
+    for w in words:
+        if len(set(w)) == 1:
+            return True
+    return False
+
+def filter_answers(answers):
+    return [a for a in answers if not looks_like_gibberish(a)]
 
 async def bot_username():
     me = await client.get_me()
@@ -63,7 +84,7 @@ async def notify_dev(text):
 async def cancel_tasks(game_obj):
     if game_obj is None:
         return
-    for attr in ("bidding_task", "answer_task", "opponent_task", "answer_watcher_task"):
+    for attr in ("bidding_task", "answer_task", "opponent_task", "opponent_timeout_task", "answer_watcher_task"):
         t = getattr(game_obj, attr, None)
         if t:
             try:
@@ -586,12 +607,16 @@ async def cb_ai_start_round(event):
 @client.on(events.CallbackQuery(data=b"ai_finish_player"))
 @safe_execute
 async def cb_ai_finish_player(event):
-    await event.answer("جاري التقييم")
+    await event.answer()
     user_id = event.sender_id
     g = ai_games.get(user_id)
     if not g or g["state"] != "player_answering":
         return await event.reply("لا توجد إجابات قيد الانتظار.")
-    ok, reason = await evaluate_answers_with_ai(g["question"], g["expected_count"], g["player_answers"])
+    filtered = filter_answers(g["player_answers"])
+    if len(filtered) < g["expected_count"]:
+        ok, reason = False, "عدد الإجابات غير كافٍ."
+    else:
+        ok, reason = await evaluate_answers_with_ai(g["question"], g["expected_count"], filtered)
     if ok:
         g["player_points"] += 10
         result_word = "نجحت"
@@ -906,29 +931,23 @@ async def answer_countdown(game_obj, chat_id, user_id, label):
             return
         prev = cp
 
-async def opponent_countdown(game_obj, chat_id, user_id, label):
+async def opponent_timeout_internal(g, user_id):
     checkpoints = [10, 5, 3, 1]
     prev = 20
     for cp in checkpoints:
         delay = prev - cp
         if delay > 0:
             await asyncio.sleep(delay)
-        if game_obj is None:
+        if g.state != "opponent_choice" or g.opponent != user_id:
             return
-        if getattr(game_obj, "state", None) != "opponent_choice":
-            return
-        if getattr(game_obj, "opponent", None) != user_id:
-            return
-        if getattr(game_obj, "opponent_resolved", False):
+        if getattr(g, "opponent_resolved", False):
             return
         try:
-            await client.send_message(user_id, "بقي " + str(cp) + " ثواني" + label)
+            await client.send_message(user_id, "بقي " + str(cp) + " ثواني لاتخاذ القرار")
         except Exception:
-            return
+            pass
         prev = cp
-
-async def opponent_timeout_internal(g, user_id):
-    await asyncio.sleep(20)
+    await asyncio.sleep(1)
     if g.state != "opponent_choice" or g.opponent != user_id:
         return
     if getattr(g, "opponent_resolved", False):
@@ -949,7 +968,22 @@ async def opponent_timeout_internal(g, user_id):
     await advance_round_internal(g)
 
 async def opponent_timeout_tournament(m, user_id):
-    await asyncio.sleep(20)
+    checkpoints = [10, 5, 3, 1]
+    prev = 20
+    for cp in checkpoints:
+        delay = prev - cp
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if m.state != "opponent_choice" or m.opponent != user_id:
+            return
+        if getattr(m, "opponent_resolved", False):
+            return
+        try:
+            await client.send_message(user_id, "بقي " + str(cp) + " ثواني لاتخاذ القرار")
+        except Exception:
+            pass
+        prev = cp
+    await asyncio.sleep(1)
     if m.state != "opponent_choice" or m.opponent != user_id:
         return
     if getattr(m, "opponent_resolved", False):
@@ -1492,11 +1526,10 @@ async def private_handler(event):
             ag["expected_count"] = bid
             ag["player_answers"] = []
             ag["state"] = "player_answering"
-            await event.reply("تم تسجيل مزايدتك " + str(bid) + ".\n\nابدأ بإرسال الإجابات، كل إجابة في رسالة منفصلة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت تلقائيًا.")
+            await event.reply("تم تسجيل مزايدتك " + str(bid) + ".\n\nأرسل الإجابات، كل إجابة في رسالة منفصلة.")
             return
         if ag["state"] == "player_answering":
             ag["player_answers"].append(txt)
-            ag["_last_answer_time"] = time.time()
             return
         if ag["state"] == "ai_turn":
             return await event.reply("انتظر دور الذكاء الاصطناعي.")
@@ -1538,8 +1571,7 @@ async def private_handler(event):
                   [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
             await client.send_message(opp, "خصمك " + user_link(uid, bname) + " قال إنه يستطيع ذكر " + str(bid) + " من " + safe_str(g.question, "") + ".\nهل تجبره على الإجابة، أو تزايد برقم أعلى؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم تسجيل مزايدتك.")
-            asyncio.create_task(opponent_countdown(g, g.chat_id, opp, " لاتخاذ القرار"))
-            g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, opp))
+            g.opponent_timeout_task = asyncio.create_task(opponent_timeout_internal(g, opp))
 
         elif is_current_opponent:
             if not text.isdigit():
@@ -1557,8 +1589,8 @@ async def private_handler(event):
             private_sessions[g.bidder] = {"game_type": "internal", "chat_id": g.chat_id, "role": "bidder"}
             private_sessions[g.opponent] = {"game_type": "internal", "chat_id": g.chat_id, "role": "opponent"}
             try:
-                if g.opponent_task:
-                    g.opponent_task.cancel()
+                if hasattr(g, "opponent_timeout_task") and g.opponent_timeout_task:
+                    g.opponent_timeout_task.cancel()
             except Exception:
                 pass
             kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_" + str(g.chat_id) + "_" + str(g.opponent)).encode())],
@@ -1568,12 +1600,10 @@ async def private_handler(event):
             await event.reply("تم رفع مزايدتك إلى " + str(newbid) + ".")
             g.state = "opponent_choice"
             g.opponent_resolved = False
-            asyncio.create_task(opponent_countdown(g, g.chat_id, g.opponent, " لاتخاذ القرار"))
-            g.opponent_task = asyncio.create_task(opponent_timeout_internal(g, g.opponent))
+            g.opponent_timeout_task = asyncio.create_task(opponent_timeout_internal(g, g.opponent))
 
         elif sess["role"] == "bidder" and g.state == "answering":
             g.answers.append(text)
-            g._last_answer_time = time.time()
             try:
                 await event.delete()
             except Exception:
@@ -1616,8 +1646,7 @@ async def private_handler(event):
                   [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
             await client.send_message(opp, "خصمك " + user_link(uid, bname) + " قال إنه يذكر " + str(bid) + " من " + safe_str(m.question, "") + ".\nهل تجبره على الإجابة، أو تزايد برقم أعلى؟ لديك 20 ثانية.", buttons=kb)
             await event.reply("تم تسجيل مزايدتك.")
-            asyncio.create_task(opponent_countdown(m, m.group1_id, opp, " لاتخاذ القرار"))
-            m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, opp))
+            m.opponent_timeout_task = asyncio.create_task(opponent_timeout_tournament(m, opp))
 
         elif is_current_opponent:
             if not text.isdigit():
@@ -1635,8 +1664,8 @@ async def private_handler(event):
             private_sessions[m.bidder] = {"game_type": "tournament", "match_id": m.match_id, "role": "bidder"}
             private_sessions[m.opponent] = {"game_type": "tournament", "match_id": m.match_id, "role": "opponent"}
             try:
-                if m.opponent_task:
-                    m.opponent_task.cancel()
+                if hasattr(m, "opponent_timeout_task") and m.opponent_timeout_task:
+                    m.opponent_timeout_task.cancel()
             except Exception:
                 pass
             kb = [[Button.inline("إجباره على الإجابة " + str(newbid), ("force_t_" + str(m.match_id) + "_" + str(m.opponent)).encode())],
@@ -1646,12 +1675,10 @@ async def private_handler(event):
             await event.reply("تم رفع مزايدتك إلى " + str(newbid) + ".")
             m.state = "opponent_choice"
             m.opponent_resolved = False
-            asyncio.create_task(opponent_countdown(m, m.group1_id, m.opponent, " لاتخاذ القرار"))
-            m.opponent_task = asyncio.create_task(opponent_timeout_tournament(m, m.opponent))
+            m.opponent_timeout_task = asyncio.create_task(opponent_timeout_tournament(m, m.opponent))
 
         elif sess["role"] == "bidder" and m.state == "answering":
             m.answers.append(text)
-            m._last_answer_time = time.time()
             try:
                 await event.delete()
             except Exception:
@@ -1673,7 +1700,6 @@ async def answer_watcher_internal(g, bidder):
             g.answer_task.cancel()
     except Exception:
         pass
-    await client.send_message(bidder, "اكملت المطلوب. جاري التقييم.")
     await evaluate_internal(g, bidder)
 
 async def answer_watcher_tournament(m, bidder):
@@ -1690,7 +1716,6 @@ async def answer_watcher_tournament(m, bidder):
             m.answer_task.cancel()
     except Exception:
         pass
-    await client.send_message(bidder, "اكملت المطلوب. جاري التقييم.")
     await evaluate_tournament(m, bidder)
 
 @client.on(events.CallbackQuery(pattern=r"^force_(-?\d+)_(\d+)$"))
@@ -1714,8 +1739,8 @@ async def cb_force_internal(event):
     g.forced = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
-        if hasattr(g, "opponent_task") and g.opponent_task:
-            g.opponent_task.cancel()
+        if hasattr(g, "opponent_timeout_task") and g.opponent_timeout_task:
+            g.opponent_timeout_task.cancel()
     except Exception:
         pass
     try:
@@ -1737,10 +1762,9 @@ async def begin_answer_internal(g, bidder):
     g.state = "answering"
     g.answers = []
     g.answer_start_time = time.time()
-    g._last_answer_time = time.time()
     kb = [[Button.inline("انسحاب من الجولة", ("wd_round_int_" + str(g.chat_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "ابدأ بإرسال " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة. الوقت: 30 ثانية.", buttons=kb)
     g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
     g.answer_watcher_task = asyncio.create_task(answer_watcher_internal(g, bidder))
     asyncio.create_task(answer_countdown(g, g.chat_id, bidder, " للإجابة"))
@@ -1773,7 +1797,11 @@ async def cb_finish_internal(event):
 async def evaluate_internal(g, bidder):
     g.state = "evaluating"
     duration = time.time() - getattr(g, "answer_start_time", time.time())
-    ok, reason = await evaluate_answers_with_ai(g.question, g.current_bid, g.answers)
+    filtered = filter_answers(g.answers)
+    if len(filtered) < g.current_bid:
+        ok, reason = False, "عدد الإجابات غير كافٍ."
+    else:
+        ok, reason = await evaluate_answers_with_ai(g.question, g.current_bid, filtered)
     try:
         bn = clean_name((await client.get_entity(bidder)).first_name)
     except Exception:
@@ -1795,7 +1823,7 @@ async def evaluate_internal(g, bidder):
             g.team2_points -= 1
         add_points(bidder, "player", -20, bn)
         result_line = "فشل اللاعب " + user_link(bidder, bn) + "\n" + reason
-    g.record_round(g.round, bidder, team, g.current_bid, ok, len(g.answers), duration, g.forced)
+    g.record_round(g.round, bidder, team, g.current_bid, ok, len(filtered), duration, g.forced)
     text = result_line + "\n\nأرواح " + g.team1_label + ": " + str(g.team1_points) + "\nأرواح " + g.team2_label + ": " + str(g.team2_points)
     await send_to_group(g, g.chat_id, text, round_level=True)
     try:
@@ -1829,8 +1857,8 @@ async def cb_force_t(event):
     m.forced = True
     await event.answer("تم إجبار الخصم على الإجابة.")
     try:
-        if hasattr(m, "opponent_task") and m.opponent_task:
-            m.opponent_task.cancel()
+        if hasattr(m, "opponent_timeout_task") and m.opponent_timeout_task:
+            m.opponent_timeout_task.cancel()
     except Exception:
         pass
     try:
@@ -1858,10 +1886,9 @@ async def begin_answer_tournament(m, bidder):
     m.state = "answering"
     m.answers = []
     m.answer_start_time = time.time()
-    m._last_answer_time = time.time()
     kb = [[Button.inline("انسحاب من الجولة", ("wd_round_t_" + str(m.match_id)).encode())],
           [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
-    await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
+    await client.send_message(bidder, "ابدأ بإرسال " + str(m.current_bid) + " إجابة، كل إجابة في رسالة منفصلة. الوقت: 30 ثانية.", buttons=kb)
     m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
     m.answer_watcher_task = asyncio.create_task(answer_watcher_tournament(m, bidder))
     asyncio.create_task(answer_countdown(m, m.group1_id, bidder, " للإجابة"))
@@ -1894,7 +1921,11 @@ async def cb_finish_t(event):
 async def evaluate_tournament(m, bidder):
     m.state = "evaluating"
     duration = time.time() - getattr(m, "answer_start_time", time.time())
-    ok, reason = await evaluate_answers_with_ai(m.question, m.current_bid, m.answers)
+    filtered = filter_answers(m.answers)
+    if len(filtered) < m.current_bid:
+        ok, reason = False, "عدد الإجابات غير كافٍ."
+    else:
+        ok, reason = await evaluate_answers_with_ai(m.question, m.current_bid, filtered)
     team1_ids = [p["user_id"] for p in m.team1]
     team = 1 if bidder in team1_ids else 2
     bname = "لاعب"
@@ -1918,7 +1949,7 @@ async def evaluate_tournament(m, bidder):
             m.team2_points -= 1
         add_points(bidder, "player", -20, bname)
         result_line = "فشل اللاعب " + user_link(bidder, bname) + "\n" + reason
-    m.record_round(m.round, bidder, team, m.current_bid, ok, len(m.answers), duration, m.forced)
+    m.record_round(m.round, bidder, team, m.current_bid, ok, len(filtered), duration, m.forced)
     for gid in m.both_groups():
         text = result_line + "\n\nأرواح " + safe_str(m.group1_name, "") + ": " + str(m.team1_points) + "\nأرواح " + safe_str(m.group2_name, "") + ": " + str(m.team2_points)
         await send_to_group(m, gid, text, round_level=True)
@@ -1962,8 +1993,8 @@ async def cb_wd_round_internal(event):
     except Exception:
         pass
     try:
-        if hasattr(g, "opponent_task") and g.opponent_task:
-            g.opponent_task.cancel()
+        if hasattr(g, "opponent_timeout_task") and g.opponent_timeout_task:
+            g.opponent_timeout_task.cancel()
     except Exception:
         pass
     if uid in g.team1:
@@ -2028,8 +2059,8 @@ async def cb_wd_round_tournament(event):
     except Exception:
         pass
     try:
-        if hasattr(m, "opponent_task") and m.opponent_task:
-            m.opponent_task.cancel()
+        if hasattr(m, "opponent_timeout_task") and m.opponent_timeout_task:
+            m.opponent_timeout_task.cancel()
     except Exception:
         pass
     if uid in team1_ids:
