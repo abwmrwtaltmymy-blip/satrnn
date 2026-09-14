@@ -426,6 +426,7 @@ async def cmd_start(event):
         return
     await send_main_menu(event.chat_id)
 
+
 @client.on(events.NewMessage(pattern=r"^@(\S+)"))
 @safe_execute
 async def on_bot_mention(event):
@@ -487,7 +488,6 @@ async def cb_promo_info(event):
         await event.edit(text, buttons=kb)
     except Exception:
         await event.reply(text, buttons=kb)
-
 
 @client.on(events.NewMessage(pattern=r"^/start_game(?:@\S+)?(?:\s+(\d+))?\s*$"))
 @safe_execute
@@ -1229,6 +1229,7 @@ async def finish_internal(g):
         private_sessions.pop(p, None)
     internal_games.pop(g.chat_id, None)
     await notify_dev("انتهاء تحدي داخلي:\n" + display_group_name(g.chat_name) + "\nID: " + str(g.chat_id))
+
 
 async def open_nomination(match):
     kb = [[Button.inline("ترشيح نفسي", ("nom_" + str(match.match_id)).encode())]]
@@ -2249,6 +2250,7 @@ async def cb_wd_match_tournament(event):
         m.team2_points = 0
     await finish_tournament(m)
 
+
 @client.on(events.NewMessage(pattern=r"^/status(?:@\S+)?$"))
 @safe_execute
 async def cmd_status(event):
@@ -2528,19 +2530,19 @@ async def run_self_check():
     except Exception as e:
         issues.append("client.get_me: " + str(e)[:100])
     try:
-        from config import GEMINI_API_KEY as _k
-        if not _k or len(_k) < 20:
-            issues.append("مفتاح Gemini غير موجود أو قصير.")
-        else:
-            try:
-                from utils import _init_gemini
-                ok = _init_gemini()
-                if not ok:
-                    issues.append("Gemini لا يعمل حاليًا.")
-            except Exception as e:
-                issues.append("فحص Gemini: " + str(e)[:100])
+        from utils import diagnose_gemini
+        diag = diagnose_gemini()
+        if not diag["working"]:
+            if not diag["key_exists"]:
+                issues.append("Gemini: المفتاح غير موجود في Railway Variables.")
+            elif diag["key_length"] < 20:
+                issues.append("Gemini: المفتاح قصير (" + str(diag["key_length"]) + " حرف).")
+            elif not diag["client_created"]:
+                issues.append("Gemini: فشل إنشاء client.")
+            else:
+                issues.append("Gemini: المفتاح موجود لكن لا يعمل مع أي موديل.")
     except Exception as e:
-        issues.append("استيراد GEMINI_API_KEY: " + str(e)[:100])
+        issues.append("فحص Gemini: " + str(e)[:150])
     try:
         from database import get_connection
         conn = get_connection()
@@ -2548,7 +2550,7 @@ async def run_self_check():
         c.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [r["name"] for r in c.fetchall()]
         conn.close()
-        needed = ["groups", "players", "users", "banned_groups", "force_subs", "settings"]
+        needed = ["groups", "players", "all_users", "banned_groups", "force_subs", "settings"]
         for t in needed:
             if t not in tables:
                 issues.append("جدول ناقص: " + t)
@@ -2584,8 +2586,8 @@ async def cb_dev_check_errors(event):
     await event.answer("جاري الفحص...")
     try:
         issues, stats = await run_self_check()
-    except Exception:
-        await event.answer("فشل الفحص.", alert=True)
+    except Exception as e:
+        await event.answer("فشل الفحص: " + str(e)[:100], alert=True)
         return
     lines = ["فحص الأخطاء"]
     if not issues:
@@ -2602,7 +2604,52 @@ async def cb_dev_check_errors(event):
     lines.append("جلسات: " + str(stats["sessions"]))
     lines.append("قائمة الانتظار: " + str(stats["pool"]))
     text = "\n".join(lines)
-    kb = [[Button.inline("رجوع", b"dev_back")]]
+    kb = [[Button.inline("تشخيص Gemini بالتفصيل", b"dev_diag_gemini")],
+          [Button.inline("رجوع", b"dev_back")]]
+    try:
+        await event.edit(text, buttons=kb)
+    except Exception:
+        try:
+            await event.reply(text, buttons=kb)
+        except Exception:
+            pass
+
+@client.on(events.CallbackQuery(data=b"dev_diag_gemini"))
+@safe_execute
+async def cb_dev_diag_gemini(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer("جاري الفحص...")
+    try:
+        from utils import diagnose_gemini
+        diag = diagnose_gemini()
+    except Exception as e:
+        try:
+            await event.edit("فشل: " + str(e)[:200], buttons=[[Button.inline("رجوع", b"dev_check_errors")]])
+        except Exception:
+            pass
+        return
+    lines = ["تشخيص Gemini", ""]
+    if diag["key_exists"]:
+        lines.append("المفتاح موجود: نعم")
+        lines.append("طول المفتاح: " + str(diag["key_length"]))
+        lines.append("بداية المفتاح: " + diag["key_start"])
+    else:
+        lines.append("المفتاح موجود: لا")
+    lines.append("العميل أُنشئ: " + ("نعم" if diag["client_created"] else "لا"))
+    lines.append("")
+    if diag["errors"]:
+        lines.append("أخطاء:")
+        for e in diag["errors"]:
+            lines.append("- " + e)
+        lines.append("")
+    lines.append("نتائج الموديلات:")
+    for m in diag["models_tested"]:
+        lines.append("- " + m[:80])
+    lines.append("")
+    lines.append("الخلاصة: " + ("يعمل" if diag["working"] else "لا يعمل"))
+    text = "\n".join(lines)[:4000]
+    kb = [[Button.inline("رجوع", b"dev_check_errors")]]
     try:
         await event.edit(text, buttons=kb)
     except Exception:
