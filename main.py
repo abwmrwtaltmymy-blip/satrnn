@@ -2864,6 +2864,244 @@ async def cb_dev_back(event):
     except Exception:
         await event.reply(text, buttons=build_dev_panel_kb())
 
+
+import os
+import shutil
+import traceback
+import subprocess
+import py_compile
+
+EDITABLE_FILES = [
+    "main.py",
+    "utils.py",
+    "questions.py",
+    "answers_bank.py",
+    "game_manager.py",
+    "database.py",
+    "config.py",
+]
+BACKUP_DIR = "file_backups"
+EDIT_LOG = "edit_log.json"
+
+os.makedirs(BACKUP_DIR, exist_ok=True)
+
+def _load_edit_log():
+    if os.path.exists(EDIT_LOG):
+        try:
+            with open(EDIT_LOG, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def _save_edit_log(log):
+    try:
+        with open(EDIT_LOG, "w", encoding="utf-8") as f:
+            json.dump(log[-200:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def _file_size_str(path):
+    try:
+        s = os.path.getsize(path)
+    except Exception:
+        return "0"
+    if s < 1024:
+        return str(s) + "B"
+    if s < 1024 * 1024:
+        return str(round(s / 1024, 1)) + "KB"
+    return str(round(s / (1024 * 1024), 2)) + "MB"
+
+def _list_editable_files():
+    lines = ["الملفات المتاحة للتعديل:"]
+    for f in EDITABLE_FILES:
+        if os.path.exists(f):
+            lines.append("- " + f + " (" + _file_size_str(f) + ")")
+        else:
+            lines.append("- " + f + " (غير موجود)")
+    return "\n".join(lines)
+
+def _validate_python(path):
+    try:
+        py_compile.compile(path, doraise=True)
+        return True, ""
+    except py_compile.PyCompileError as e:
+        return False, str(e)[:500]
+    except Exception as e:
+        return False, str(e)[:500]
+
+def _backup_file(filename):
+    try:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        dest = os.path.join(BACKUP_DIR, filename + "_" + ts + ".bak")
+        shutil.copy(filename, dest)
+        return dest
+    except Exception:
+        return None
+
+def _list_backups_for(filename):
+    try:
+        prefix = filename + "_"
+        files = [f for f in os.listdir(BACKUP_DIR) if f.startswith(prefix) and f.endswith(".bak")]
+        files.sort(reverse=True)
+        return files
+    except Exception:
+        return []
+
+RESTART_AUTO = {"enabled": False}
+
+async def _restart_bot():
+    await client.disconnect()
+    try:
+        subprocess.Popen(["python", "main.py"])
+    except Exception:
+        pass
+    os._exit(0)
+
+@client.on(events.NewMessage(pattern=r"^/files$", from_users=DEV_ID))
+@safe_execute
+async def cmd_files(event):
+    await event.reply(_list_editable_files())
+
+@client.on(events.NewMessage(pattern=r"^/edit (\S+)$", from_users=DEV_ID))
+@safe_execute
+async def cmd_edit(event):
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES:
+        return await event.reply("الملف غير مسموح بتعديله.")
+    if not os.path.exists(fname):
+        return await event.reply("الملف غير موجود.")
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return await event.reply("فشل قراءة الملف: " + str(e)[:150])
+    if len(content) > 3800:
+        await event.reply("الملف كبير (" + str(len(content)) + " حرف). سيتم إرساله مقسم.\nاستعمل /edit_upload " + fname + " لاستبداله بالكامل.")
+        for i in range(0, len(content), 3500):
+            chunk = content[i:i + 3500]
+            try:
+                await event.reply("[" + str(i) + "-" + str(i + len(chunk)) + "]\n" + chunk)
+            except Exception:
+                pass
+    else:
+        await event.reply("محتوى " + fname + ":\n\n" + content)
+
+@client.on(events.NewMessage(pattern=r"^/edit_upload (\S+)$", from_users=DEV_ID))
+@safe_execute
+async def cmd_edit_upload(event):
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES:
+        return await event.reply("الملف غير مسموح.")
+    DEV_STATE["edit_file"] = fname
+    await event.reply("أرسل الآن محتوى " + fname + " كاملاً في رسالة واحدة.\nسيتم فحصه قبل الحفظ.\n\nللإلغاء: /edit_cancel")
+
+@client.on(events.NewMessage(pattern=r"^/edit_cancel$", from_users=DEV_ID))
+@safe_execute
+async def cmd_edit_cancel(event):
+    DEV_STATE.pop("edit_file", None)
+    await event.reply("تم الإلغاء.")
+
+@client.on(events.NewMessage(pattern=r"^/file_backup (\S+)$", from_users=DEV_ID))
+@safe_execute
+async def cmd_file_backup(event):
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES:
+        return await event.reply("الملف غير مسموح.")
+    if not os.path.exists(fname):
+        return await event.reply("الملف غير موجود.")
+    dest = _backup_file(fname)
+    if not dest:
+        return await event.reply("فشل إنشاء النسخة.")
+    await event.reply("تم إنشاء نسخة: " + dest)
+
+@client.on(events.NewMessage(pattern=r"^/file_list_backups$", from_users=DEV_ID))
+@safe_execute
+async def cmd_file_list_backups(event):
+    lines = ["النسخ الاحتياطية:"]
+    for f in EDITABLE_FILES:
+        bk = _list_backups_for(f)
+        lines.append("")
+        lines.append(f + ":")
+        if not bk:
+            lines.append("  لا يوجد")
+        else:
+            for b in bk[:5]:
+                lines.append("  - " + b)
+    await event.reply("\n".join(lines)[:4000])
+
+@client.on(events.NewMessage(pattern=r"^/file_restore (\S+)$", from_users=DEV_ID))
+@safe_execute
+async def cmd_file_restore(event):
+    arg = event.pattern_match.group(1)
+    if os.path.sep in arg or arg.startswith(".."):
+        return await event.reply("اسم غير صالح.")
+    src = os.path.join(BACKUP_DIR, arg)
+    if not os.path.exists(src):
+        return await event.reply("النسخة غير موجودة.")
+    original = None
+    for f in EDITABLE_FILES:
+        if arg.startswith(f + "_"):
+            original = f
+            break
+    if not original:
+        return await event.reply("لا يمكن تحديد الملف الأصلي.")
+    try:
+        shutil.copy(src, original)
+    except Exception as e:
+        return await event.reply("فشل الاستعادة: " + str(e)[:150])
+    valid, err = _validate_python(original)
+    if not valid:
+        return await event.reply("تم الاستعادة لكن الملف فيه خطأ:\n" + err)
+    log = _load_edit_log()
+    log.append({
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "action": "restore",
+        "file": original,
+        "backup": arg,
+    })
+    _save_edit_log(log)
+    await event.reply("تم استعادة " + original + " من " + arg)
+    if RESTART_AUTO.get("enabled"):
+        await event.reply("جاري إعادة التشغيل...")
+        await asyncio.sleep(2)
+        await _restart_bot()
+
+@client.on(events.NewMessage(pattern=r"^/edit_log$", from_users=DEV_ID))
+@safe_execute
+async def cmd_edit_log(event):
+    log = _load_edit_log()
+    if not log:
+        return await event.reply("السجل فارغ.")
+    lines = ["سجل التعديلات (آخر 30):"]
+    for entry in log[-30:]:
+        lines.append(
+            entry.get("time", "") + " | " +
+            entry.get("action", "") + " | " +
+            entry.get("file", "") + " | " +
+            str(entry.get("info", ""))[:60]
+        )
+    await event.reply("\n".join(lines)[:4000])
+
+@client.on(events.NewMessage(pattern=r"^/restart$", from_users=DEV_ID))
+@safe_execute
+async def cmd_restart(event):
+    await event.reply("جاري إعادة التشغيل...")
+    await asyncio.sleep(2)
+    await _restart_bot()
+
+@client.on(events.NewMessage(pattern=r"^/restart_auto_on$", from_users=DEV_ID))
+@safe_execute
+async def cmd_restart_auto_on(event):
+    RESTART_AUTO["enabled"] = True
+    await event.reply("تم تشغيل إعادة التشغيل التلقائي بعد حفظ الملفات.")
+
+@client.on(events.NewMessage(pattern=r"^/restart_auto_off$", from_users=DEV_ID))
+@safe_execute
+async def cmd_restart_auto_off(event):
+    RESTART_AUTO["enabled"] = False
+    await event.reply("تم إيقاف إعادة التشغيل التلقائي.")
+
 print("Bot is running...")
 client.run_until_disconnected()
 
