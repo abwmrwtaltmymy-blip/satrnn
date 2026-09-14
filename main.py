@@ -143,6 +143,18 @@ async def delete_round_messages(game_obj):
                     except Exception:
                         pass
 
+async def send_to_group(game_obj, chat_id, text, round_level=False, buttons=None):
+    try:
+        msg = await client.send_message(chat_id, text, buttons=buttons)
+        if round_level:
+            if not hasattr(game_obj, "round_messages") or game_obj.round_messages is None:
+                game_obj.round_messages = []
+            game_obj.round_messages.append((chat_id, msg.id))
+        return msg
+    except Exception as e:
+        print(f"Error sending to group: {e}")
+        return None
+
 async def edit_pinned(game_obj, chat_id, text, buttons=None):
     if game_obj is None or not hasattr(game_obj, "pin_msg_id") or not game_obj.pin_msg_id:
         return
