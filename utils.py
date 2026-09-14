@@ -19,8 +19,9 @@ _norm_cache = {}
 
 ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
 REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
-LINK_OR_MENTION_RE = re.compile(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", re.IGNORECASE)
-LATIN_DIGIT_ONLY_RE = re.compile(r"^[A-Za-z0-9_\.\-\s]+$")
+LINK_OR_MENTION_RE = re.compile(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|\.io|\.me|@", re.IGNORECASE)
+LATIN_ONLY_RE = re.compile(r"^[A-Za-z0-9_\.\-\s]+$")
+PHONE_ANY_RE = re.compile(r"^\+?[\d\s\-\(\)]{7,}$")
 
 KNOWN_SHORT_WORDS = {
     "لا", "نعم", "هو", "هي", "هم", "من", "في", "على", "عن", "الى", "إلى",
@@ -74,21 +75,22 @@ def is_gibberish(text):
                 return True
     return False
 
-def _looks_like_username_or_link(text):
-    if not text:
-        return False
-    t = text.strip()
+def _is_bad_name(name):
+    if not name:
+        return True
+    t = name.strip()
     if not t:
-        return False
+        return True
     low = t.lower()
     if LINK_OR_MENTION_RE.search(low):
         return True
-    if LATIN_DIGIT_ONLY_RE.match(t):
+    if PHONE_ANY_RE.match(t):
         return True
-    if low.startswith("t.me/") or low.startswith("telegram.me/"):
+    if LATIN_ONLY_RE.match(t):
         return True
-    if re.match(r"^\+?\d{7,}$", t):
-        return True
+    for w in BAD_WORDS:
+        if w and w in low:
+            return True
     return False
 
 def _init_gemini():
@@ -173,28 +175,44 @@ async def _gemini_generate(prompt, max_retries=4):
                 break
     return None
 
-def clean_name(name, default_fallback=SAFE_FALLBACK):
+def clean_name(name, default_fallback=None):
     if name is None:
-        return default_fallback
+        return default_fallback or "لاعب"
     if isinstance(name, bytes):
         try:
             name = name.decode("utf-8", errors="ignore")
         except Exception:
-            return default_fallback
+            return default_fallback or "لاعب"
     if not isinstance(name, str):
         try:
             name = str(name)
         except Exception:
-            return default_fallback
+            return default_fallback or "لاعب"
     name = name.strip()
     if not name:
-        return default_fallback
-    if _looks_like_username_or_link(name):
-        return default_fallback
-    low = name.lower()
-    for w in BAD_WORDS:
-        if w and w in low:
-            return default_fallback
+        return default_fallback or "لاعب"
+    if _is_bad_name(name):
+        return default_fallback or "لاعب"
+    return name[:32]
+
+def clean_name_with_id(name, user_id, default_prefix="لاعب"):
+    if name is None:
+        return default_prefix + " " + str(user_id)
+    if isinstance(name, bytes):
+        try:
+            name = name.decode("utf-8", errors="ignore")
+        except Exception:
+            return default_prefix + " " + str(user_id)
+    if not isinstance(name, str):
+        try:
+            name = str(name)
+        except Exception:
+            return default_prefix + " " + str(user_id)
+    name = name.strip()
+    if not name:
+        return default_prefix + " " + str(user_id)
+    if _is_bad_name(name):
+        return default_prefix + " " + str(user_id)
     return name[:32]
 
 def name_has_bad_word(name):
@@ -210,13 +228,7 @@ def name_has_bad_word(name):
             name = str(name)
         except Exception:
             return True
-    if _looks_like_username_or_link(name):
-        return True
-    low = name.lower()
-    for w in BAD_WORDS:
-        if w and w in low:
-            return True
-    return False
+    return _is_bad_name(name)
 
 def safe_display_name(name, fallback="المجموعة"):
     if name is None:
@@ -234,12 +246,8 @@ def safe_display_name(name, fallback="المجموعة"):
     name = name.strip()
     if not name:
         return fallback
-    if _looks_like_username_or_link(name):
+    if _is_bad_name(name):
         return fallback
-    low = name.lower()
-    for w in BAD_WORDS:
-        if w and w in low:
-            return fallback
     return name[:40]
 
 def _normalize_answers(answers_list):
@@ -769,6 +777,7 @@ def safe_execute(func):
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            print("safe_execute error:", str(e)[:300])
             try:
                 await event.reply(translate_error(e))
             except Exception:
