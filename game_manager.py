@@ -70,6 +70,7 @@ class InternalGame:
         self.answer_watcher_task = None
         self.answer_start_time = None
         self._join_timeout_task = None
+        self.opponent_timeout_task = None
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -134,6 +135,7 @@ class Tournament:
         self.opponent_resolved = False
         self.answer_watcher_task = None
         self.answer_start_time = None
+        self.opponent_timeout_task = None
 
     def resolve_top(self, gid):
         lst = []
@@ -161,14 +163,7 @@ class Tournament:
         })
 
 
-# ============ لعبة 1 ضد 1 (طلب ب) ============
-
 class DuelGame:
-    """
-    لعبة 1 ضد 1 مخصصة عندما يقوم شخص بالرد على شخص آخر بأمر /1v1.
-    - team_size = 1 لكل فريق.
-    - لاعب واحد فقط في كل فريق.
-    """
     def __init__(self, chat_id, chat_name, player1_id, player1_name, player2_id, player2_name):
         self.chat_id = chat_id
         self.chat_name = chat_name
@@ -210,6 +205,7 @@ class DuelGame:
         self.opponent_resolved = False
         self.answer_watcher_task = None
         self.answer_start_time = None
+        self.opponent_timeout_task = None
 
     def split_teams(self):
         pass
@@ -230,34 +226,36 @@ class DuelGame:
         })
 
 
-# ============ لعبة ضد الذكاء الاصطناعي (طلب و) ============
-
 class AIGame:
-    """
-    لعبة تفاعلية ضد الذكاء الاصطناعي في الخاص.
-    تشبه اللعب ضد إنسان حقيقي.
-    """
     def __init__(self, user_id, difficulty="medium"):
         self.user_id = user_id
         self.difficulty = difficulty
-        self.player_points = 100
-        self.ai_points = 100
+        self.player_points = 3
+        self.ai_points = 3
         self.round = 1
         self.state = "idle"
         self.question = None
-        self.player_bid = 0
-        self.ai_bid = 0
+        self.current_bid = 0
         self.player_answers = []
         self.ai_answers = []
-        self.expected_count = 0
-        self.turn = "player"  # player or ai
+        self.bidder = None
+        self.opponent = None
+        self.opponent_resolved = False
+        self.forced = False
+        self.consecutive_timeouts = 0
+        self.bidding_task = None
+        self.answer_task = None
+        self.opponent_timeout_task = None
+        self.answer_watcher_task = None
         self.tracked_messages = []
         self.round_stats = []
-        self.pending_ai_decision = None  # accept / raise / force
+        self.answer_start_time = None
+        self.start_time = time.time()
+        self.end_time = None
 
-    def record_round(self, bidder, bid, success, answers_count, duration=0, forced=False):
+    def record_round(self, round_num, bidder, bid, success, answers_count, duration, forced):
         self.round_stats.append({
-            "round": self.round,
+            "round": round_num,
             "bidder": bidder,
             "bid": bid,
             "success": success,
