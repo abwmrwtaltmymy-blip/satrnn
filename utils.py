@@ -17,6 +17,14 @@ _gemini_models_working = []
 _gemini_lock = None
 _norm_cache = {}
 
+ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
+REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
+KNOWN_SHORT_WORDS = {
+    "لا", "نعم", "هو", "هي", "هم", "من", "في", "على", "عن", "الى", "إلى",
+    "هذا", "هذه", "ذلك", "تلك", "التي", "الذي", "لكن", "ثم", "قد", "كان",
+    "شي", "شيء", "أي", "اي", "كل", "بعض", "غير", "حتى", "اذا", "إذا",
+}
+
 def _get_lock():
     global _gemini_lock
     if _gemini_lock is None:
@@ -37,6 +45,31 @@ def safe_str(v, default=""):
         except Exception:
             return default
     return v
+
+def is_gibberish(text):
+    if not text:
+        return True
+    t = safe_str(text, "").strip()
+    if len(t) < 2:
+        return True
+    if REPEAT_CHAR_RE.search(t):
+        return True
+    if not ARABIC_ONLY_RE.match(t):
+        if not re.search(r"[\u0600-\u06FF]{3,}", t):
+            return True
+    words = [w for w in re.findall(r"[\u0600-\u06FF]+", t) if len(w) >= 2]
+    if not words:
+        return True
+    for w in words:
+        if w in KNOWN_SHORT_WORDS:
+            continue
+        if len(set(w)) == 1:
+            return True
+        if len(w) >= 4:
+            unique_ratio = len(set(w)) / len(w)
+            if unique_ratio < 0.4:
+                return True
+    return False
 
 def _init_gemini():
     global _gemini_client, _gemini_models_working
@@ -183,6 +216,8 @@ def _normalize_answers(answers_list):
                 continue
         s = a.strip()
         if len(s) < 2:
+            continue
+        if is_gibberish(s):
             continue
         k = s.lower()
         if k in seen:
