@@ -63,7 +63,7 @@ async def notify_dev(text):
 async def cancel_tasks(game_obj):
     if game_obj is None:
         return
-    for attr in ("bidding_task", "answer_task", "opponent_task"):
+    for attr in ("bidding_task", "answer_task", "opponent_task", "answer_watcher_task"):
         t = getattr(game_obj, attr, None)
         if t:
             try:
@@ -1036,6 +1036,7 @@ async def start_round_internal(g):
     g.answers = []
     g.opponent_resolved = False
     g.forced = False
+    g.answer_watcher_task = None
     b, o, bteam = decide_bidder_teams(g)
     g.bidder = b
     g.opponent = o
@@ -1347,6 +1348,7 @@ async def start_round_tournament(m):
     m.answers = []
     m.opponent_resolved = False
     m.forced = False
+    m.answer_watcher_task = None
     b, o, bteam = decide_bidder_tournament(m)
     m.bidder = b
     m.opponent = o
@@ -1576,8 +1578,6 @@ async def private_handler(event):
                 await event.delete()
             except Exception:
                 pass
-            if not hasattr(g, "answer_watcher_task") or g.answer_watcher_task is None or g.answer_watcher_task.done():
-                g.answer_watcher_task = asyncio.create_task(answer_watcher_internal(g, uid))
         else:
             return
 
@@ -1656,24 +1656,16 @@ async def private_handler(event):
                 await event.delete()
             except Exception:
                 pass
-            if not hasattr(m, "answer_watcher_task") or m.answer_watcher_task is None or m.answer_watcher_task.done():
-                m.answer_watcher_task = asyncio.create_task(answer_watcher_tournament(m, uid))
         else:
             return
 
 async def answer_watcher_internal(g, bidder):
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
         if g.state != "answering" or g.bidder != bidder:
             return
-        last = getattr(g, "_last_answer_time", 0)
-        if time.time() - last < 3:
-            continue
-        if not g.answers:
-            continue
         if len(g.answers) >= g.current_bid:
             break
-        break
     if g.state != "answering" or g.bidder != bidder:
         return
     try:
@@ -1681,22 +1673,16 @@ async def answer_watcher_internal(g, bidder):
             g.answer_task.cancel()
     except Exception:
         pass
-    await client.send_message(bidder, "اكملت. جاري التقييم.")
+    await client.send_message(bidder, "اكملت المطلوب. جاري التقييم.")
     await evaluate_internal(g, bidder)
 
 async def answer_watcher_tournament(m, bidder):
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
         if m.state != "answering" or m.bidder != bidder:
             return
-        last = getattr(m, "_last_answer_time", 0)
-        if time.time() - last < 3:
-            continue
-        if not m.answers:
-            continue
         if len(m.answers) >= m.current_bid:
             break
-        break
     if m.state != "answering" or m.bidder != bidder:
         return
     try:
@@ -1704,7 +1690,7 @@ async def answer_watcher_tournament(m, bidder):
             m.answer_task.cancel()
     except Exception:
         pass
-    await client.send_message(bidder, "اكملت. جاري التقييم.")
+    await client.send_message(bidder, "اكملت المطلوب. جاري التقييم.")
     await evaluate_tournament(m, bidder)
 
 @client.on(events.CallbackQuery(pattern=r"^force_(-?\d+)_(\d+)$"))
@@ -1756,6 +1742,7 @@ async def begin_answer_internal(g, bidder):
           [Button.inline("انسحاب من المباراة", ("wd_match_int_" + str(g.chat_id)).encode())]]
     await client.send_message(bidder, "بدأ الوقت. أرسل " + str(g.current_bid) + " إجابة، كل إجابة في رسالة منفصلة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
     g.answer_task = asyncio.create_task(answer_timeout_internal(g, bidder))
+    g.answer_watcher_task = asyncio.create_task(answer_watcher_internal(g, bidder))
     asyncio.create_task(answer_countdown(g, g.chat_id, bidder, " للإجابة"))
 
 async def answer_timeout_internal(g, bidder):
@@ -1776,6 +1763,11 @@ async def cb_finish_internal(event):
             g.answer_task.cancel()
     except Exception:
         pass
+    try:
+        if getattr(g, "answer_watcher_task", None):
+            g.answer_watcher_task.cancel()
+    except Exception:
+        pass
     await evaluate_internal(g, g.bidder)
 
 async def evaluate_internal(g, bidder):
@@ -1787,11 +1779,6 @@ async def evaluate_internal(g, bidder):
     except Exception:
         bn = "لاعب"
     team = 1 if bidder in g.team1 else 2
-    for a in g.answers:
-        try:
-            pass
-        except Exception:
-            pass
     if ok:
         if team == 1:
             g.team2_points -= 1
@@ -1876,6 +1863,7 @@ async def begin_answer_tournament(m, bidder):
           [Button.inline("انسحاب من المباراة", ("wd_match_t_" + str(m.match_id)).encode())]]
     await client.send_message(bidder, "بدأ الوقت. أرسل " + str(m.current_bid) + " إجابة كل واحدة في رسالة.\nالبوت يراقبك، لما تخلص راح يكولك اكملت. الوقت: 30 ثانية.", buttons=kb)
     m.answer_task = asyncio.create_task(answer_timeout_tournament(m, bidder))
+    m.answer_watcher_task = asyncio.create_task(answer_watcher_tournament(m, bidder))
     asyncio.create_task(answer_countdown(m, m.group1_id, bidder, " للإجابة"))
 
 async def answer_timeout_tournament(m, bidder):
@@ -1894,6 +1882,11 @@ async def cb_finish_t(event):
     try:
         if m.answer_task:
             m.answer_task.cancel()
+    except Exception:
+        pass
+    try:
+        if getattr(m, "answer_watcher_task", None):
+            m.answer_watcher_task.cancel()
     except Exception:
         pass
     await evaluate_tournament(m, m.bidder)
@@ -1964,6 +1957,11 @@ async def cb_wd_round_internal(event):
     except Exception:
         pass
     try:
+        if getattr(g, "answer_watcher_task", None):
+            g.answer_watcher_task.cancel()
+    except Exception:
+        pass
+    try:
         if hasattr(g, "opponent_task") and g.opponent_task:
             g.opponent_task.cancel()
     except Exception:
@@ -2022,6 +2020,11 @@ async def cb_wd_round_tournament(event):
     try:
         if m.answer_task:
             m.answer_task.cancel()
+    except Exception:
+        pass
+    try:
+        if getattr(m, "answer_watcher_task", None):
+            m.answer_watcher_task.cancel()
     except Exception:
         pass
     try:
