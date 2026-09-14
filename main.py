@@ -2640,14 +2640,26 @@ async def cb_dev_diag_gemini(event):
         lines.append("المفتاح موجود: لا")
     lines.append("العميل أُنشئ: " + ("نعم" if diag["client_created"] else "لا"))
     lines.append("")
+    available = diag.get("models_available", [])
+    lines.append("الموديلات المتاحة عند Google (" + str(len(available)) + "):")
+    if available:
+        for name in available[:20]:
+            lines.append("- " + name)
+    else:
+        lines.append("- لم تُجلب القائمة")
+    lines.append("")
     if diag["errors"]:
         lines.append("أخطاء:")
         for e in diag["errors"]:
             lines.append("- " + e)
         lines.append("")
-    lines.append("نتائج الموديلات:")
-    for m in diag["models_tested"]:
-        lines.append("- " + m[:80])
+    lines.append("نتائج الاختبار:")
+    tested = diag.get("models_tested", [])
+    if tested:
+        for m in tested:
+            lines.append("- " + m[:80])
+    else:
+        lines.append("- لم يتم اختبار أي موديل")
     lines.append("")
     lines.append("الخلاصة: " + ("يعمل" if diag["working"] else "لا يعمل"))
     text = "\n".join(lines)[:4000]
