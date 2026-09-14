@@ -28,11 +28,13 @@ KNOWN_SHORT_WORDS = {
     "شي", "شيء", "أي", "اي", "كل", "بعض", "غير", "حتى", "اذا", "إذا",
 }
 
+
 def _get_lock():
     global _gemini_lock
     if _gemini_lock is None:
         _gemini_lock = asyncio.Lock()
     return _gemini_lock
+
 
 def safe_str(v, default=""):
     if v is None:
@@ -48,6 +50,7 @@ def safe_str(v, default=""):
         except Exception:
             return default
     return v
+
 
 def is_gibberish(text):
     if not text:
@@ -74,6 +77,7 @@ def is_gibberish(text):
                 return True
     return False
 
+
 def _is_bad_name(name):
     if not name:
         return True
@@ -89,6 +93,7 @@ def _is_bad_name(name):
         if w and w in low:
             return True
     return False
+
 
 def _init_gemini():
     global _gemini_client, _gemini_models_working
@@ -119,11 +124,10 @@ def _init_gemini():
         print("Gemini: no models returned")
         return False
     print("Gemini models available:", available[:20])
-    
+
     candidates = []
     for name in available:
         low = name.lower()
-        # استثناء الموديلات غير المتاحة لحسابك (مثل gemini-2.5)
         if low.startswith("gemini-2."):
             continue
         if "flash" in low and "vision" not in low and "embedding" not in low:
@@ -135,7 +139,7 @@ def _init_gemini():
                 candidates.append(name)
     if not candidates:
         candidates = available[:5]
-        
+
     working = []
     for name in candidates:
         try:
@@ -154,6 +158,7 @@ def _init_gemini():
     _gemini_models_working = working
     print("Gemini ready with:", working[0], "total:", len(working))
     return True
+
 
 async def _gemini_generate(prompt, max_retries=4):
     if not _init_gemini():
@@ -186,25 +191,27 @@ async def _gemini_generate(prompt, max_retries=4):
                 break
     return None
 
+
 def clean_name(name, default_fallback=None):
     if name is None:
-        return default_fallback or "لاعب"
+        return default_fallback or SAFE_FALLBACK
     if isinstance(name, bytes):
         try:
             name = name.decode("utf-8", errors="ignore")
         except Exception:
-            return default_fallback or "لاعب"
+            return default_fallback or SAFE_FALLBACK
     if not isinstance(name, str):
         try:
             name = str(name)
         except Exception:
-            return default_fallback or "لاعب"
+            return default_fallback or SAFE_FALLBACK
     name = name.strip()
     if not name:
-        return default_fallback or "لاعب"
+        return default_fallback or SAFE_FALLBACK
     if _is_bad_name(name):
-        return default_fallback or "لاعب"
+        return default_fallback or SAFE_FALLBACK
     return name[:32]
+
 
 def clean_name_with_id(name, user_id, default_prefix="لاعب"):
     if name is None:
@@ -226,6 +233,7 @@ def clean_name_with_id(name, user_id, default_prefix="لاعب"):
         return default_prefix + " " + str(user_id)
     return name[:32]
 
+
 def name_has_bad_word(name):
     if not name:
         return False
@@ -240,6 +248,7 @@ def name_has_bad_word(name):
         except Exception:
             return True
     return _is_bad_name(name)
+
 
 def safe_display_name(name, fallback="المجموعة"):
     if name is None:
@@ -260,6 +269,7 @@ def safe_display_name(name, fallback="المجموعة"):
     if _is_bad_name(name):
         return fallback
     return name[:40]
+
 
 def _normalize_answers(answers_list):
     uniq = []
@@ -289,12 +299,14 @@ def _normalize_answers(answers_list):
         uniq.append(s)
     return uniq
 
+
 def _local_fallback_check(expected_count, answers_list):
     uniq = _normalize_answers(answers_list)
     count = len(uniq)
     if count >= expected_count:
         return True, "تم قبول " + str(count) + " إجابة مختلفة."
     return False, "عدد الإجابات المختلفة " + str(count) + " أقل من المطلوب " + str(expected_count) + "."
+
 
 def _to_bool(v):
     if isinstance(v, bool):
@@ -305,6 +317,7 @@ def _to_bool(v):
     if isinstance(v, (int, float)):
         return v != 0
     return False
+
 
 def _parse_gemini_json(text):
     if not text:
@@ -323,6 +336,7 @@ def _parse_gemini_json(text):
     except Exception:
         return None
 
+
 def _base_normalize(s):
     s = safe_str(s, "").strip().lower()
     s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ٱ", "ا")
@@ -336,6 +350,7 @@ def _base_normalize(s):
     if s.startswith("ال") and len(s) > 3:
         s = s[2:]
     return s.strip()
+
 
 def _normalize_variants(word):
     if not word:
@@ -367,8 +382,10 @@ def _normalize_variants(word):
     _norm_cache[word] = result
     return result
 
+
 def _normalize_ar(s):
     return _base_normalize(s)
+
 
 def _levenshtein(a, b):
     if a == b:
@@ -390,6 +407,7 @@ def _levenshtein(a, b):
         prev = curr
     return prev[-1]
 
+
 def _allowed_errors(word):
     n = len(word)
     if n <= 2:
@@ -401,6 +419,7 @@ def _allowed_errors(word):
     if n <= 8:
         return 2
     return 3
+
 
 def _word_match(answer_norm, bank_norm):
     a_words = answer_norm.split()
@@ -430,6 +449,7 @@ def _word_match(answer_norm, bank_norm):
                 return True
     return False
 
+
 def _fuzzy_match(answer_norm, bank_norm):
     if not answer_norm or not bank_norm:
         return False
@@ -447,6 +467,7 @@ def _fuzzy_match(answer_norm, bank_norm):
         return True
     return False
 
+
 def _variants_match(answer_word, bank_word):
     a_vars = _normalize_variants(answer_word)
     b_vars = _normalize_variants(bank_word)
@@ -455,6 +476,7 @@ def _variants_match(answer_word, bank_word):
             if _fuzzy_match(av, bv):
                 return True
     return False
+
 
 def _check_against_bank(question, answers_list):
     try:
@@ -480,6 +502,7 @@ def _check_against_bank(question, answers_list):
         else:
             unknown_answers.append(a)
     return correct_answers, unknown_answers, True
+
 
 async def _verify_unknown_with_ai(question, unknown_answers):
     if not unknown_answers:
@@ -519,6 +542,7 @@ async def _verify_unknown_with_ai(question, unknown_answers):
         if a not in result:
             result[a] = False
     return result
+
 
 async def evaluate_answers_with_ai(question, expected_count, answers_list):
     if not answers_list:
@@ -579,6 +603,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
     if correct:
         return True, "تم قبول " + str(count_int) + " إجابة صحيحة من أصل " + str(expected_count) + ". " + reason
     return False, "عدد الإجابات الصحيحة " + str(count_int) + " أقل من المطلوب " + str(expected_count) + ". " + reason
+
 
 async def evaluate_winner_points(stats, winner_label, loser_label, team_size):
     fallback = 350
@@ -662,6 +687,7 @@ async def evaluate_winner_points(stats, winner_label, loser_label, team_size):
     reason = safe_str(data.get("reason"), "أداء جيد.")
     return points, reason
 
+
 async def ai_generate_answers(question, target_count, difficulty="medium"):
     question = safe_str(question, "")
     accuracy_map = {"easy": 0.55, "medium": 0.75, "hard": 0.9}
@@ -686,6 +712,7 @@ async def ai_generate_answers(question, target_count, difficulty="medium"):
         return _local_generate_answers(question, target_count, difficulty)
     return cleaned[:actual_count]
 
+
 def _local_generate_answers(question, target_count, difficulty="medium"):
     try:
         from answers_bank import ANSWERS_BANK
@@ -705,6 +732,7 @@ def _local_generate_answers(question, target_count, difficulty="medium"):
     picked = base[:min(target, len(base))]
     return picked
 
+
 async def ai_generate_bid(question, difficulty="medium"):
     question = safe_str(question, "")
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
@@ -723,10 +751,162 @@ async def ai_generate_bid(question, difficulty="medium"):
         return max(1, min(n, 50))
     return _local_generate_bid(question, difficulty)
 
+
 def _local_generate_bid(question, difficulty="medium"):
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
     low, high = ranges.get(difficulty, (5, 9))
     return random.randint(low, high)
+
+
+# ============ الذكاء الاصطناعي التفاعلي (طلب و) ============
+
+async def ai_smart_bid(question, difficulty="medium", opponent_bid=0, is_response=False):
+    """
+    الذكاء الاصطناعي يزايد بذكاء حسب مستواه.
+    - إذا is_response=True، فهو يرد على مزايدة الخصم.
+    - إذا is_response=False، فهو يبدأ المزايدة.
+    """
+    question = safe_str(question, "")
+    ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
+    low, high = ranges.get(difficulty, (5, 9))
+
+    if is_response and opponent_bid > 0:
+        # الذكاء الاصطناعي يرد على مزايدة الخصم
+        # احتمال القبول أو الرفع حسب الصعوبة
+        if difficulty == "easy":
+            accept_chance = 0.5
+            max_raise = 2
+        elif difficulty == "medium":
+            accept_chance = 0.35
+            max_raise = 3
+        else:
+            accept_chance = 0.2
+            max_raise = 4
+
+        if random.random() < accept_chance:
+            return "accept", opponent_bid
+
+        new_bid = opponent_bid + random.randint(1, max_raise)
+        return "raise", min(new_bid, 50)
+
+    # بدء المزايدة
+    if difficulty == "easy":
+        base = random.randint(low, max(low, high - 2))
+    elif difficulty == "medium":
+        base = random.randint(low, high)
+    else:
+        base = random.randint(high - 2, high)
+
+    return "bid", max(1, min(base, 50))
+
+
+async def ai_react_to_bid(question, difficulty="medium", player_bid=0):
+    """
+    الذكاء الاصطناعي يقرر كيف يتفاعل مع مزايدة اللاعب.
+    يرجع: ("accept" أو "raise" أو "force"، الرقم)
+    """
+    question = safe_str(question, "")
+
+    if difficulty == "easy":
+        accept_chance = 0.5
+        force_chance = 0.1
+        max_raise = 2
+    elif difficulty == "medium":
+        accept_chance = 0.35
+        force_chance = 0.15
+        max_raise = 3
+    else:
+        accept_chance = 0.2
+        force_chance = 0.25
+        max_raise = 4
+
+    roll = random.random()
+
+    if roll < force_chance:
+        return "force", player_bid
+    if roll < force_chance + accept_chance:
+        return "accept", player_bid
+
+    new_bid = player_bid + random.randint(1, max_raise)
+    return "raise", min(new_bid, 50)
+
+
+async def ai_human_like_delay(difficulty="medium"):
+    """تأخير طبيعي يحاكي تفكير البشر."""
+    if difficulty == "easy":
+        delay = random.uniform(1.5, 3.5)
+    elif difficulty == "medium":
+        delay = random.uniform(2.0, 5.0)
+    else:
+        delay = random.uniform(3.0, 6.5)
+    await asyncio.sleep(delay)
+
+
+async def ai_comment_on_round(difficulty="medium", success=False, is_player=False):
+    """تعليق بشري على نتيجة الجولة."""
+    if success:
+        comments = [
+            "ههههههه، سهل!",
+            "شفت شلون؟",
+            "هذا شيء بسيط بالنسبة إلي.",
+            "توقعتها صح.",
+            "أنا الأفضل بهذا المجال 😎",
+        ]
+    else:
+        comments = [
+            "أوبس... أخطأت.",
+            "هممم، صعب السؤال.",
+            "خلينا نشوف الجولة الجاية.",
+            "ما توقعت هذا.",
+            "المهم، الجاي أحسن.",
+        ]
+
+    if is_player:
+        if success:
+            return random.choice(["أحسنت!", "برافو!", "شاطر!", "ما شاء الله!"])
+        else:
+            return random.choice(["لا بأس، حاول مرة ثانية.", "المهم المشاركة.", "الجاي أحسن."])
+
+    return random.choice(comments)
+
+
+# ============ التشخيص الذكي (طلب د) ============
+
+async def ai_diagnose_issue(issue_text):
+    """
+    يحلل المشكلة ويعطي حلاً مقترحاً.
+    يرجع: (تحليل، حل_مقترح، كود_مقترح أو None)
+    """
+    issue_text = safe_str(issue_text, "")
+    if not issue_text:
+        return "لم يتم تقديم وصف للمشكلة.", "", None
+
+    prompt = (
+        "أنت خبير مبرمج Python وبوتات Telethon.\n"
+        "المستخدم يواجه مشكلة في بوت تلغرام بلغة Python.\n\n"
+        "وصف المشكلة:\n" + issue_text + "\n\n"
+        "المطلوب:\n"
+        "1. حلل المشكلة بالعربية.\n"
+        "2. اقترح حلاً واضحاً.\n"
+        "3. إذا كان الحل يحتاج كود، اكتبه بشكل منفصل.\n\n"
+        "أعد النتيجة بصيغة JSON فقط:\n"
+        "{\"analysis\": \"تحليل المشكلة\", \"solution\": \"الحل المقترح\", \"code\": \"كود مقترح أو فارغ\"}"
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        return "تعذر الاتصال بالذكاء الاصطناعي.", "حاول مرة أخرى.", None
+
+    data = _parse_gemini_json(text)
+    if not data:
+        return text[:500], "لم يتمكن التحليل من إرجاع JSON.", None
+
+    analysis = safe_str(data.get("analysis"), "لا يوجد تحليل.")
+    solution = safe_str(data.get("solution"), "لا يوجد حل مقترح.")
+    code = safe_str(data.get("code"), "")
+    if not code:
+        code = None
+    return analysis, solution, code
+
 
 def translate_error(err):
     low = str(err).lower()
@@ -764,6 +944,7 @@ def translate_error(err):
         return "إحدى الرسائل المطلوب حذفها غير موجودة."
     return "حدث خطأ: " + safe_str(err, "")
 
+
 def safe_execute(func):
     async def wrapper(event, *args, **kwargs):
         try:
@@ -795,6 +976,7 @@ def safe_execute(func):
                 pass
     return wrapper
 
+
 async def _is_member(client, channel_username, user_id):
     try:
         await client(functions.channels.GetParticipantRequest(channel=channel_username, participant=user_id))
@@ -803,6 +985,7 @@ async def _is_member(client, channel_username, user_id):
         return False
     except Exception:
         return False
+
 
 async def _has_pending_request(client, channel_username, user_id):
     try:
@@ -826,6 +1009,7 @@ async def _has_pending_request(client, channel_username, user_id):
     except Exception:
         return False
 
+
 async def check_force_sub(client, user_id):
     from database import get_force_subs
     subs = get_force_subs()
@@ -841,6 +1025,7 @@ async def check_force_sub(client, user_id):
         missing.append(sub)
     return missing
 
+
 async def require_subscription(event):
     if event.is_private:
         return True
@@ -853,6 +1038,7 @@ async def require_subscription(event):
         await event.reply("يجب الاشتراك في القنوات التالية أولاً ثم إعادة المحاولة.", buttons=buttons)
         return False
     return True
+
 
 def diagnose_gemini():
     result = {
