@@ -425,8 +425,8 @@ async def cmd_start(event):
     if not await require_subscription(event):
         return
     await send_main_menu(event.chat_id)
-
-
+    
+    
 @client.on(events.NewMessage(pattern=r"^@(\S+)"))
 @safe_execute
 async def on_bot_mention(event):
@@ -1229,8 +1229,8 @@ async def finish_internal(g):
         private_sessions.pop(p, None)
     internal_games.pop(g.chat_id, None)
     await notify_dev("انتهاء تحدي داخلي:\n" + display_group_name(g.chat_name) + "\nID: " + str(g.chat_id))
-
-
+    
+    
 async def open_nomination(match):
     kb = [[Button.inline("ترشيح نفسي", ("nom_" + str(match.match_id)).encode())]]
     text1 = ("فتح باب الترشيح للتحدي\n\nالخصم: " + display_group_name(match.group2_name) + "\n\n"
@@ -2249,8 +2249,7 @@ async def cb_wd_match_tournament(event):
     else:
         m.team2_points = 0
     await finish_tournament(m)
-
-
+    
 @client.on(events.NewMessage(pattern=r"^/status(?:@\S+)?$"))
 @safe_execute
 async def cmd_status(event):
@@ -2587,7 +2586,10 @@ async def cb_dev_check_errors(event):
     try:
         issues, stats = await run_self_check()
     except Exception as e:
-        await event.answer("فشل الفحص: " + str(e)[:100], alert=True)
+        try:
+            await event.edit("فشل الفحص: " + str(e)[:100], buttons=[[Button.inline("رجوع", b"dev_back")]])
+        except Exception:
+            pass
         return
     lines = ["فحص الأخطاء"]
     if not issues:
@@ -2754,7 +2756,7 @@ async def cb_dev_list_subs(event):
     else:
         lines = ["قنوات الاشتراك الإجباري:"]
         for s in subs:
-            lines.append(safe_str(s["username"], "") + " (وضع: " + str(s["is_request_mode"]) + ")")
+            lines.append(safe_str(s["username"], "") + " (وضع الطلب: " + str(s["is_request_mode"]) + ")")
         text = "\n".join(lines)
     kb = [[Button.inline("رجوع", b"dev_back")]]
     try:
@@ -2864,3 +2866,4 @@ async def cb_dev_back(event):
 
 print("Bot is running...")
 client.run_until_disconnected()
+
