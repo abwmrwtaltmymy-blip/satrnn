@@ -1,6 +1,6 @@
 import random
 import time
-from questions import QUESTIONS
+from questions import QUESTIONS, QUESTIONS_BY_CATEGORY
 
 internal_games = {}
 tournaments = {}
@@ -12,7 +12,9 @@ def new_match_id():
     _match_counter[0] += 1
     return _match_counter[0]
 
-def get_question():
+def get_question(category=None):
+    if category and category in QUESTIONS_BY_CATEGORY:
+        return random.choice(QUESTIONS_BY_CATEGORY[category])
     return random.choice(QUESTIONS)
 
 def initial_lives(team_size):
@@ -24,6 +26,7 @@ class InternalGame:
     def __init__(self, chat_id, chat_name, team_size):
         self.chat_id = chat_id
         self.chat_name = chat_name
+        self.category = None
         self.team_size = team_size
         self.required_total = team_size * 2
         self.players = []
@@ -58,6 +61,7 @@ class InternalGame:
         self.round_stats = []
         self.start_time = None
         self.end_time = None
+        self.chat_name_display = ""
 
     def split_teams(self):
         shuffled = self.players[:]
@@ -88,6 +92,7 @@ class Tournament:
         self.group2_id = group2_id
         self.group2_name = group2_name
         self.squad = squad
+        self.category = None
         self.state = "nominating"
         self.candidates = {group1_id: {}, group2_id: {}}
         self.team1 = []
