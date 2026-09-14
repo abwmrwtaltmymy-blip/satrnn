@@ -19,6 +19,7 @@ _norm_cache = {}
 
 ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
 REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
+LINK_OR_MENTION_RE = re.compile(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", re.IGNORECASE)
 KNOWN_SHORT_WORDS = {
     "لا", "نعم", "هو", "هي", "هم", "من", "في", "على", "عن", "الى", "إلى",
     "هذا", "هذه", "ذلك", "تلك", "التي", "الذي", "لكن", "ثم", "قد", "كان",
@@ -170,10 +171,10 @@ def clean_name(name, default_fallback=SAFE_FALLBACK):
     if not name:
         return default_fallback
     low = name.lower()
-    if re.search(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", low):
+    if LINK_OR_MENTION_RE.search(low):
         return default_fallback
     for w in BAD_WORDS:
-        if w in low:
+        if w and w in low:
             return default_fallback
     return name[:32]
 
@@ -191,12 +192,36 @@ def name_has_bad_word(name):
         except Exception:
             return True
     low = name.lower()
-    if re.search(r"t\.me|telegram\.me|https?://|\bwww\b|\.com|\.net|\.org|@", low):
+    if LINK_OR_MENTION_RE.search(low):
         return True
     for w in BAD_WORDS:
-        if w in low:
+        if w and w in low:
             return True
     return False
+
+def safe_display_name(name, fallback="المجموعة"):
+    if name is None:
+        return fallback
+    if isinstance(name, bytes):
+        try:
+            name = name.decode("utf-8", errors="ignore")
+        except Exception:
+            return fallback
+    if not isinstance(name, str):
+        try:
+            name = str(name)
+        except Exception:
+            return fallback
+    name = name.strip()
+    if not name:
+        return fallback
+    low = name.lower()
+    if LINK_OR_MENTION_RE.search(low):
+        return fallback
+    for w in BAD_WORDS:
+        if w and w in low:
+            return fallback
+    return name[:40]
 
 def _normalize_answers(answers_list):
     uniq = []
