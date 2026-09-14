@@ -1,3 +1,6 @@
+# questions.py
+# قائمة الكلمات الممنوعة والأسئلة
+
 BAD_WORDS = [
     "اباحي", "إباحي", "سكس", "sex", "porn", "porno", "xxx",
     "kill", "blood", "داعش", "isis",
@@ -174,6 +177,7 @@ QUESTIONS_BY_CATEGORY = {
 QUESTIONS = []
 for _cat in QUESTIONS_BY_CATEGORY.values():
     QUESTIONS.extend(_cat)
+
 
 def get_questions_by_category(category=None):
     if category and category in QUESTIONS_BY_CATEGORY:
