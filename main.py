@@ -3468,5 +3468,382 @@ async def _restart_bot():
     os._exit(0)
 
 
+
+AI_FIX_STATE = {}
+
+
+def build_ai_assistant_kb():
+    return [
+        [Button.inline("اقتراح تعديل دالة", b"ai_assist_edit")],
+        [Button.inline("إصلاح خطأ", b"ai_assist_fix")],
+        [Button.inline("مراجعة ملف", b"ai_assist_review")],
+        [Button.inline("رجوع", b"dev_back")],
+    ]
+
+
+@client.on(events.CallbackQuery(data=b"dev_menu_ai"))
+@safe_execute
+async def cb_dev_menu_ai(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    text = ("المساعد الذكي\n\n"
+            "اقتراح تعديل دالة: يقرأ الملف ويقترح كود جديد لدالة محددة.\n"
+            "إصلاح خطأ: يقرأ الملف ويحدد الخطأ ويقترح حلاً.\n"
+            "مراجعة ملف: تقرير عن المشاكل المحتملة في الملف.")
+    try:
+        await event.edit(text, buttons=build_ai_assistant_kb())
+    except Exception:
+        await event.reply(text, buttons=build_ai_assistant_kb())
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_edit"))
+@safe_execute
+async def cb_ai_assist_edit(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    kb = []
+    for f in EDITABLE_FILES:
+        if f == "config.py":
+            continue
+        kb.append([Button.inline(f, ("ai_edit_file_" + f).encode())])
+    kb.append([Button.inline("رجوع", b"dev_menu_ai")])
+    try:
+        await event.edit("اختر الملف:", buttons=kb)
+    except Exception:
+        await event.reply("اختر الملف:", buttons=kb)
+
+
+@client.on(events.CallbackQuery(pattern=r"^ai_edit_file_(\S+)$"))
+@safe_execute
+async def cb_ai_edit_file(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES or fname == "config.py":
+        return await event.answer("غير مسموح.", alert=True)
+    if not os.path.exists(fname):
+        return await event.answer("الملف غير موجود.", alert=True)
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception:
+        return await event.answer("تعذر قراءة الملف.", alert=True)
+    functions = list_functions_in_file(content)
+    AI_FIX_STATE[event.sender_id] = {"file": fname, "functions": functions}
+    await event.answer("اختر الدالة:")
+    kb = []
+    for fn in functions[:40]:
+        kb.append([Button.inline(fn, ("ai_fn_" + fn).encode())])
+    kb.append([Button.inline("رجوع", b"ai_assist_edit")])
+    try:
+        await event.edit("اختر الدالة من " + fname + ":", buttons=kb)
+    except Exception:
+        await event.reply("اختر الدالة:", buttons=kb)
+
+
+@client.on(events.CallbackQuery(pattern=r"^ai_fn_(\w+)$"))
+@safe_execute
+async def cb_ai_fn(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    fname = event.pattern_match.group(1)
+    state = AI_FIX_STATE.get(event.sender_id)
+    if not state or "file" not in state:
+        return await event.answer("انتهت الجلسة.", alert=True)
+    state["function"] = fname
+    await event.answer("أرسل وصف التعديل.")
+    try:
+        await event.edit("أرسل الآن وصف التعديل الذي تريد تطبيقه على الدالة:\n" + fname + "\n\nللإلغاء: /ai_assist_cancel")
+    except Exception:
+        pass
+
+
+@client.on(events.NewMessage(pattern=r"^/ai_assist_cancel$", from_users=DEV_ID))
+@safe_execute
+async def cmd_ai_assist_cancel(event):
+    AI_FIX_STATE.pop(event.sender_id, None)
+    await event.reply("تم الإلغاء.")
+
+
+@client.on(events.NewMessage(func=lambda e: e.is_private and e.sender_id == DEV_ID and not e.text.startswith("/") and AI_FIX_STATE.get(e.sender_id, {}).get("function")))
+@safe_execute
+async def ai_assist_receive_desc(event):
+    state = AI_FIX_STATE.get(event.sender_id)
+    if not state:
+        return
+    fname = state["file"]
+    function_name = state["function"]
+    desc = safe_str(event.text, "").strip()
+    if not desc:
+        return
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return await event.reply("تعذر قراءة الملف: " + str(e)[:100])
+    old_func = extract_function_code(content, function_name)
+    if not old_func:
+        return await event.reply("لم يتم العثور على الدالة في الملف.")
+    await event.reply("جاري التحليل... قد يستغرق بعض الوقت.")
+    new_code, explanation = await ai_suggest_function_fix(fname, function_name, desc, content)
+    if not new_code:
+        return await event.reply("فشل التحليل: " + str(explanation))
+    AI_FIX_STATE[event.sender_id] = {
+        "file": fname,
+        "function": function_name,
+        "old_code": old_func,
+        "new_code": new_code,
+        "explanation": explanation,
+    }
+    preview = ("الاقتراح:\n\n"
+               "الملف: " + fname + "\n"
+               "الدالة: " + function_name + "\n\n"
+               "الشرح: " + explanation + "\n\n"
+               "الكود الجديد:\n" + new_code[:3000])
+    kb = [
+        [Button.inline("تطبيق", b"ai_assist_apply")],
+        [Button.inline("عرض الكود كاملاً", b"ai_assist_show_full")],
+        [Button.inline("إلغاء", b"ai_assist_cancel_btn")],
+    ]
+    try:
+        await event.reply(preview[:4000], buttons=kb)
+    except Exception:
+        pass
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_show_full"))
+@safe_execute
+async def cb_ai_assist_show_full(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    state = AI_FIX_STATE.get(event.sender_id)
+    if not state or "new_code" not in state:
+        return await event.answer("لا يوجد اقتراح.", alert=True)
+    await event.answer()
+    code = state["new_code"]
+    for i in range(0, len(code), 3500):
+        chunk = code[i:i + 3500]
+        try:
+            await client.send_message(event.sender_id, chunk)
+        except Exception:
+            pass
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_cancel_btn"))
+@safe_execute
+async def cb_ai_assist_cancel_btn(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    AI_FIX_STATE.pop(event.sender_id, None)
+    await event.answer("تم الإلغاء.")
+    try:
+        await event.edit("تم إلغاء التعديل.")
+    except Exception:
+        pass
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_apply"))
+@safe_execute
+async def cb_ai_assist_apply(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    state = AI_FIX_STATE.get(event.sender_id)
+    if not state or "new_code" not in state:
+        return await event.answer("لا يوجد اقتراح.", alert=True)
+    fname = state["file"]
+    function_name = state["function"]
+    new_code = state["new_code"]
+    await event.answer("جاري التطبيق...")
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return await event.reply("تعذر القراءة: " + str(e)[:100])
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(BACKUP_DIR, fname + "_" + ts + ".bak")
+    try:
+        shutil.copy(fname, backup_path)
+    except Exception as e:
+        return await event.reply("فشل النسخ الاحتياطي: " + str(e)[:100])
+    new_content = replace_function_code(content, function_name, new_code)
+    if not new_content:
+        return await event.reply("فشل استبدال الدالة. لم يتم العثور عليها.")
+    try:
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write(new_content)
+    except Exception as e:
+        return await event.reply("فشل الكتابة: " + str(e)[:100])
+    try:
+        py_compile.compile(fname, doraise=True)
+    except Exception as e:
+        try:
+            shutil.copy(backup_path, fname)
+        except Exception:
+            pass
+        return await event.reply("فشل الفحص. تم استعادة النسخة الأصلية تلقائياً.\n\nالخطأ:\n" + str(e)[:300])
+    try:
+        with open(EDIT_LOG, "r", encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception:
+        log = []
+    log.append({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "action": "ai_edit", "file": fname, "info": function_name})
+    try:
+        with open(EDIT_LOG, "w", encoding="utf-8") as f:
+            json.dump(log[-200:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    AI_FIX_STATE.pop(event.sender_id, None)
+    try:
+        await event.edit("تم التطبيق بنجاح.\n\nالملف: " + fname + "\nالدالة: " + function_name + "\n\nجاري إعادة التشغيل...")
+    except Exception:
+        pass
+    await asyncio.sleep(2)
+    await _restart_bot()
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_fix"))
+@safe_execute
+async def cb_ai_assist_fix(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    kb = []
+    for f in EDITABLE_FILES:
+        if f == "config.py":
+            continue
+        kb.append([Button.inline(f, ("ai_fix_file_" + f).encode())])
+    kb.append([Button.inline("رجوع", b"dev_menu_ai")])
+    try:
+        await event.edit("اختر الملف الذي به الخطأ:", buttons=kb)
+    except Exception:
+        await event.reply("اختر الملف:", buttons=kb)
+
+
+@client.on(events.CallbackQuery(pattern=r"^ai_fix_file_(\S+)$"))
+@safe_execute
+async def cb_ai_fix_file(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES or fname == "config.py":
+        return await event.answer("غير مسموح.", alert=True)
+    AI_FIX_STATE[event.sender_id] = {"file": fname, "mode": "fix"}
+    await event.answer("أرسل وصف الخطأ.")
+    try:
+        await event.edit("أرسل الآن وصف الخطأ الذي تواجهه في " + fname + ":\n\nللإلغاء: /ai_assist_cancel")
+    except Exception:
+        pass
+
+
+@client.on(events.NewMessage(func=lambda e: e.is_private and e.sender_id == DEV_ID and not e.text.startswith("/") and AI_FIX_STATE.get(e.sender_id, {}).get("mode") == "fix"))
+@safe_execute
+async def ai_fix_receive(event):
+    state = AI_FIX_STATE.get(event.sender_id)
+    if not state:
+        return
+    fname = state["file"]
+    desc = safe_str(event.text, "").strip()
+    if not desc:
+        return
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return await event.reply("تعذر القراءة: " + str(e)[:100])
+    await event.reply("جاري التحليل...")
+    prompt = (
+        "أنت خبير Python.\n"
+        "هذا محتوى الملف " + fname + ":\n"
+        "```python\n" + content[:6000] + "\n```\n\n"
+        "المشكلة: " + desc + "\n\n"
+        "حدد الدالة التي بها المشكلة، وأعد اسمها والكود الجديد لها.\n"
+        "أعد JSON فقط:\n"
+        "{\"function_name\": \"اسم الدالة\", \"new_code\": \"الكود الجديد\", \"explanation\": \"شرح\"}"
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        return await event.reply("فشل التحليل.")
+    from utils import _parse_gemini_json, safe_str as _ss
+    data = _parse_gemini_json(text)
+    if not data:
+        return await event.reply("فشل تحليل JSON.")
+    fn = _ss(data.get("function_name"), "")
+    new_code = _ss(data.get("new_code"), "")
+    explanation = _ss(data.get("explanation"), "")
+    if not fn or not new_code:
+        return await event.reply("لم يتم إرجاع كود صالح.")
+    AI_FIX_STATE[event.sender_id] = {
+        "file": fname,
+        "function": fn,
+        "new_code": new_code,
+        "explanation": explanation,
+    }
+    preview = ("الاقتراح:\n\nالملف: " + fname + "\nالدالة: " + fn + "\n\nالشرح: " + explanation + "\n\nالكود:\n" + new_code[:3000])
+    kb = [
+        [Button.inline("تطبيق", b"ai_assist_apply")],
+        [Button.inline("عرض الكود كاملاً", b"ai_assist_show_full")],
+        [Button.inline("إلغاء", b"ai_assist_cancel_btn")],
+    ]
+    try:
+        await event.reply(preview[:4000], buttons=kb)
+    except Exception:
+        pass
+
+
+@client.on(events.CallbackQuery(data=b"ai_assist_review"))
+@safe_execute
+async def cb_ai_assist_review(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    kb = []
+    for f in EDITABLE_FILES:
+        if f == "config.py":
+            continue
+        kb.append([Button.inline(f, ("ai_review_file_" + f).encode())])
+    kb.append([Button.inline("رجوع", b"dev_menu_ai")])
+    try:
+        await event.edit("اختر الملف للمراجعة:", buttons=kb)
+    except Exception:
+        await event.reply("اختر الملف:", buttons=kb)
+
+
+@client.on(events.CallbackQuery(pattern=r"^ai_review_file_(\S+)$"))
+@safe_execute
+async def cb_ai_review_file(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    fname = event.pattern_match.group(1)
+    if fname not in EDITABLE_FILES or fname == "config.py":
+        return await event.answer("غير مسموح.", alert=True)
+    await event.answer("جاري المراجعة...")
+    try:
+        with open(fname, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception:
+        return await event.reply("تعذر القراءة.")
+    prompt = (
+        "أنت خبير Python وبوتات Telethon.\n"
+        "راجع هذا الملف وأعطني تقريراً موجزاً بالعربية عن:\n"
+        "1. المشاكل المحتملة.\n"
+        "2. التحسينات المقترحة.\n"
+        "3. الأخطاء الواضحة.\n\n"
+        "الملف " + fname + ":\n"
+        "```python\n" + content[:6000] + "\n```"
+    )
+    text = await _gemini_generate(prompt)
+    if not text:
+        return await event.reply("فشل التحليل.")
+    try:
+        await event.edit("مراجعة " + fname + ":\n\n" + text[:3800])
+    except Exception:
+        try:
+            await event.reply(text[:3800])
+        except Exception:
+            pass
+
+
 print("Bot is running...")
 client.run_until_disconnected()
