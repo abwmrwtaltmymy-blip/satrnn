@@ -3588,8 +3588,7 @@ def find_relevant_functions(content, keywords):
     return result
 
 
-@client.on(events.NewMessage(func=lambda e: e.is_private and e.sender_id == DEV_ID and not e.text.startswith("/") and AI_ASSIST_STATE.get(e.sender_id, {}).get("mode") == "waiting"))
-@safe_execute
+@client.on(events.NewMessage(func=lambda e: e.is_private and e.sender_id == DEV_ID and not e.text.startswith("/") and AI_ASSIST_STATE.get(e.sender_id, {}).get("mode") in ("waiting", "processing")))
 async def ai_assist_receive_issue(event):
     state = AI_ASSIST_STATE.get(event.sender_id)
     if not state:
@@ -3672,14 +3671,15 @@ async def ai_assist_receive_issue(event):
     kb = [
         [Button.inline("تطبيق", b"ai_assist_apply")],
         [Button.inline("عرض الكود كاملاً", b"ai_assist_show_full")],
+        [Button.inline("تعديل الوصف", b"ai_assist_edit_desc")],
         [Button.inline("إلغاء", b"ai_assist_cancel_btn")],
     ]
     try:
         await event.reply(preview[:4000], buttons=kb)
     except Exception:
         pass
-
-
+        
+        
 @client.on(events.CallbackQuery(data=b"ai_assist_show_full"))
 @safe_execute
 async def cb_ai_assist_show_full(event):
@@ -3696,7 +3696,27 @@ async def cb_ai_assist_show_full(event):
             await client.send_message(event.sender_id, chunk)
         except Exception:
             pass
+    kb = [
+        [Button.inline("تطبيق", b"ai_assist_apply")],
+        [Button.inline("تعديل الوصف", b"ai_assist_edit_desc")],
+        [Button.inline("إلغاء", b"ai_assist_cancel_btn")],
+    ]
+    try:
+        await client.send_message(event.sender_id, "اختر:", buttons=kb)
+    except Exception:
+        pass
 
+@client.on(events.CallbackQuery(data=b"ai_assist_edit_desc"))
+@safe_execute
+async def cb_ai_assist_edit_desc(event):
+    if event.sender_id != DEV_ID:
+        return await event.answer("للمطور فقط.", alert=True)
+    await event.answer()
+    AI_ASSIST_STATE[event.sender_id] = {"mode": "waiting"}
+    try:
+        await event.edit("أرسل الوصف الجديد للمشكلة:\n\nللإلغاء: /ai_assist_cancel")
+    except Exception:
+        await event.reply("أرسل الوصف الجديد:\n\nللإلغاء: /ai_assist_cancel")
 
 @client.on(events.CallbackQuery(data=b"ai_assist_cancel_btn"))
 @safe_execute
