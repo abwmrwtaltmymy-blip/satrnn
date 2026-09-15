@@ -3808,7 +3808,6 @@ async def cmd_dev_announce(event):
     user_id = getattr(me, "id", DEV_ID)
     text = "\n[" + full + "](tg://user?id=" + str(user_id) + ")"
     kb = [
-        [Button.url("⭐ " + full + " ⭐", "https://t.me/" + DEV_USERNAME)],
         [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
         [Button.url("• قناة التحديثات •", "https://t.me/" + DEV_CHANNEL)],
     ]
