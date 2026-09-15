@@ -2567,10 +2567,8 @@ async def cmd_dev_announce(event):
     name_link = "[" + full + "](tg://user?id=" + str(user_id) + ")"
     text = "المطور:\n" + name_link
     kb = [
-        [Button.url("⭐ " + full + " ⭐", "https://t.me/" + DEV_USERNAME)],
         [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
-        [Button.url("• قناة التحديثات •", "https://t.me/" + DEV_CHANNEL)],
-    ]
+]
     photo = None
     try:
         photo = await client.download_profile_photo(me, file=bytes)
@@ -3792,6 +3790,12 @@ async def cb_ai_assist_apply(event):
         pass
     await asyncio.sleep(2)
     await _restart_bot()
+
+    
+
+    if hasattr(game_obj, "handle_bidding_timeout"):
+        await game_obj.handle_bidding_timeout(chat_id, user_id)
+
 
 
 print("Bot is running...")
