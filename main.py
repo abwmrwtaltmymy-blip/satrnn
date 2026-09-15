@@ -3806,7 +3806,7 @@ async def cmd_dev_announce(event):
     last = safe_str(getattr(me, "last_name", ""), "")
     full = (first + " " + last).strip() or "المطور"
     user_id = getattr(me, "id", DEV_ID)
-    text = "المطور:\n[" + full + "](tg://user?id=" + str(user_id) + ")"
+    text = "\n[" + full + "](tg://user?id=" + str(user_id) + ")"
     kb = [
         [Button.url("⭐ " + full + " ⭐", "https://t.me/" + DEV_USERNAME)],
         [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
