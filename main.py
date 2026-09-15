@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import py_compile
 
-from config import API_ID, API_HASH, BOT_TOKEN, DEV_ID
+from config import API_ID, API_HASH, BOT_TOKEN, DEV_ID, DEV_USERNAME, DEV_CHANNEL, DEV_BIO
 from database import (init_db, add_points, get_top, is_banned, ban_group, unban_group,
                       add_force_sub, remove_force_sub, get_force_subs, get_stats,
                       get_all_groups, get_all_users, register_user, update_win_loss,
