@@ -3239,8 +3239,8 @@ async def cmd_broadcast_all(event):
             us += 1
             await asyncio.sleep(0.5)
         except Exception:
-            pass    await event.reply("تم الإرسال إلى " + str(gs) + " مجموعة و " + str(us) + " مستخدم.")
-
+            pass
+    await event.reply("تم الإرسال إلى " + str(gs) + " مجموعة و " + str(us) + " مستخدم.")
 
 @client.on(events.NewMessage(pattern=r"^/ban_group (-?\d+)$", from_users=DEV_ID))
 @safe_execute
