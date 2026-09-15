@@ -1224,6 +1224,13 @@ async def start_round_internal(g):
         private_sessions[b] = {"game_type": "internal", "chat_id": g.chat_id, "role": "bidder"}
         private_sessions[o] = {"game_type": "internal", "chat_id": g.chat_id, "role": "opponent"}
         await cache_names(g, g.team1, g.team2)
+        for uid in g.players:
+            if uid not in g._name_cache:
+                try:
+                    ent = await client.get_entity(uid)
+                    g._name_cache[uid] = clean_name_with_id(ent.first_name, uid, "لاعب")
+                except Exception:
+                    g._name_cache[uid] = "لاعب " + str(uid)
         bn = g._name_cache.get(b, "لاعب غير معروف")
         on = g._name_cache.get(o, "لاعب غير معروف")
         b_team_label = g.team1_label if bteam == 1 else g.team2_label
@@ -1933,7 +1940,7 @@ async def private_handler(event):
 async def answer_watcher_internal(g, bidder):
     bid_at_start = g.current_bid
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
         if g.state != "answering" or g.bidder != bidder:
             return
         if g.current_bid != bid_at_start:
@@ -1955,7 +1962,7 @@ async def answer_watcher_internal(g, bidder):
 async def answer_watcher_tournament(m, bidder):
     bid_at_start = m.current_bid
     while True:
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
         if m.state != "answering" or m.bidder != bidder:
             return
         if m.current_bid != bid_at_start:
@@ -2123,6 +2130,10 @@ async def evaluate_internal(g, bidder):
         if g.team1_points <= 0 or g.team2_points <= 0:
             await finish_internal(g)
             return
+        await cancel_round_tasks(g)
+        await advance_round_internal(g)
+        
+        return
         await advance_round_internal(g)
     except Exception as e:
         print("evaluate_internal error:", str(e)[:300])
@@ -2288,6 +2299,7 @@ async def evaluate_tournament(m, bidder):
         if m.team1_points <= 0 or m.team2_points <= 0:
             await finish_tournament(m)
             return
+        await cancel_round_tasks(m)
         await advance_round_tournament(m)
     except Exception as e:
         print("evaluate_tournament error:", str(e)[:300])
