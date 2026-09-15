@@ -3806,8 +3806,12 @@ async def cmd_dev_announce(event):
     last = safe_str(getattr(me, "last_name", ""), "")
     full = (first + " " + last).strip() or "المطور"
     user_id = getattr(me, "id", DEV_ID)
-    name_link = "[" + full + "](tg://user?id=" + str(user_id) + ")"
-    text = "المطور:\n" + name_link
+    text = "المطور:\n[" + full + "](tg://user?id=" + str(user_id) + ")"
+    kb = [
+        [Button.url("⭐ " + full + " ⭐", "https://t.me/" + DEV_USERNAME)],
+        [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
+        [Button.url("• قناة التحديثات •", "https://t.me/" + DEV_CHANNEL)],
+    ]
     photo = None
     try:
         photo = await client.download_profile_photo(me, file=bytes)
@@ -3818,12 +3822,12 @@ async def cmd_dev_announce(event):
             import io
             bio = io.BytesIO(photo)
             bio.name = "dev.jpg"
-            await client.send_file(event.chat_id, bio, caption=text, parse_mode="md")
+            await client.send_file(event.chat_id, bio, caption=text, buttons=kb, parse_mode="md")
         else:
-            await event.reply(text, parse_mode="md")
+            await event.reply(text, buttons=kb, parse_mode="md")
     except Exception:
         try:
-            await event.reply(text, parse_mode="md")
+            await event.reply(text, buttons=kb)
         except Exception:
             pass
 print("Bot is running...")
