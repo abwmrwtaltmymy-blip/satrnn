@@ -3793,5 +3793,40 @@ async def cb_ai_assist_apply(event):
     await _restart_bot()
 
 
+@client.on(events.NewMessage(pattern=r"^المطور$"))
+@safe_execute
+async def cmd_dev_announce(event):
+    if event.is_private:
+        return
+    try:
+        me = await client.get_entity(DEV_ID)
+    except Exception:
+        return
+    first = safe_str(getattr(me, "first_name", ""), "")
+    last = safe_str(getattr(me, "last_name", ""), "")
+    full = (first + " " + last).strip() or "المطور"
+    user_id = getattr(me, "id", DEV_ID)
+    name_link = "[" + full + "](tg://user?id=" + str(user_id) + ")"
+    text = "المطور:\n" + name_link
+    kb = [[Button.url("تواصل مع المطور", "tg://user?id=" + str(user_id))]]
+    photo = None
+    try:
+        photo = await client.download_profile_photo(me, file=bytes)
+    except Exception:
+        photo = None
+    try:
+        if photo:
+            import io
+            bio = io.BytesIO(photo)
+            bio.name = "dev.jpg"
+            await client.send_file(event.chat_id, bio, caption=text, buttons=kb, parse_mode="md")
+        else:
+            await event.reply(text, buttons=kb, parse_mode="md")
+    except Exception:
+        try:
+            await event.reply(text, buttons=kb)
+        except Exception:
+            pass
+
 print("Bot is running...")
 client.run_until_disconnected()
