@@ -8,7 +8,8 @@ import shutil
 import subprocess
 import py_compile
 
-from config import API_ID, API_HASH, BOT_TOKEN, DEV_ID, DEV_USERNAME, DEV_CHANNEL, DEV_BIO
+from config import (API_ID, API_HASH, BOT_TOKEN, DEV_ID,
+                    DEV_USERNAME, DEV_CHANNEL, DEV_BIO)
 from database import (init_db, add_points, get_top, is_banned, ban_group, unban_group,
                       add_force_sub, remove_force_sub, get_force_subs, get_stats,
                       get_all_groups, get_all_users, register_user, update_win_loss,
@@ -562,8 +563,6 @@ async def cmd_start_game(event):
         return await event.reply("هذا الأمر مخصص للمجموعات.")
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
-    if not await is_group_admin(event):
-        return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
     if not await require_subscription(event):
         return
     if event.chat_id in internal_games:
@@ -2132,9 +2131,6 @@ async def evaluate_internal(g, bidder):
             return
         await cancel_round_tasks(g)
         await advance_round_internal(g)
-        
-        return
-        await advance_round_internal(g)
     except Exception as e:
         print("evaluate_internal error:", str(e)[:300])
         try:
@@ -2555,6 +2551,46 @@ async def cmd_dev(event):
         pass
 
 
+@client.on(events.NewMessage(pattern=r"^المطور$"))
+@safe_execute
+async def cmd_dev_announce(event):
+    if event.is_private:
+        return
+    try:
+        me = await client.get_entity(DEV_ID)
+    except Exception:
+        return
+    first = safe_str(getattr(me, "first_name", ""), "")
+    last = safe_str(getattr(me, "last_name", ""), "")
+    full = (first + " " + last).strip() or "المطور"
+    user_id = getattr(me, "id", DEV_ID)
+    name_link = "[" + full + "](tg://user?id=" + str(user_id) + ")"
+    text = "المطور:\n" + name_link
+    kb = [
+        [Button.url("⭐ " + full + " ⭐", "https://t.me/" + DEV_USERNAME)],
+        [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
+        [Button.url("• قناة التحديثات •", "https://t.me/" + DEV_CHANNEL)],
+    ]
+    photo = None
+    try:
+        photo = await client.download_profile_photo(me, file=bytes)
+    except Exception:
+        photo = None
+    try:
+        if photo:
+            import io
+            bio = io.BytesIO(photo)
+            bio.name = "dev.jpg"
+            await client.send_file(event.chat_id, bio, caption=text, buttons=kb, parse_mode="md")
+        else:
+            await event.reply(text, buttons=kb, parse_mode="md")
+    except Exception:
+        try:
+            await event.reply(text, buttons=kb)
+        except Exception:
+            pass
+
+
 @client.on(events.CallbackQuery(data=b"dev_menu_notif"))
 @safe_execute
 async def cb_dev_menu_notif(event):
@@ -2624,45 +2660,16 @@ async def cb_dev_menu_ai(event):
     if event.sender_id != DEV_ID:
         return await event.answer("للمطور فقط.", alert=True)
     await event.answer()
-    text = ("التشخيص الذكي\n\n"
-            "يمكنك إرسال وصف مشكلة، وسيقوم الذكاء الاصطناعي بتحليلها واقتراح حل.\n"
-            "استخدم الأمر التالي:\n"
-            "/ai_fix")
+    text = ("المساعد الذكي\n\n"
+            "اكتب وصف المشكلة أو التعديل الذي تريده، وسأقرأ الملفات وأقترح الحل.\n\n"
+            "أمثلة:\n"
+            "- الذكاء الاصطناعي ما يزايد عدل، خليه يقرر بين القبول والرفع والإجبار\n"
+            "- عندي خطأ في تسجيل النقاط\n"
+            "- أريد تحسين سرعة البوت")
     try:
-        await event.edit(text, buttons=build_dev_ai_kb())
+        await event.edit(text, buttons=build_ai_assistant_kb())
     except Exception:
-        await event.reply(text, buttons=build_dev_ai_kb())
-
-
-@client.on(events.NewMessage(pattern=r"^/ai_fix$", from_users=DEV_ID))
-@safe_execute
-async def cmd_ai_fix(event):
-    DEV_STATE["ai_fix_waiting"] = event.sender_id
-    await event.reply("أرسل وصف المشكلة التي تواجهها، وسأحللها بالذكاء الاصطناعي.\n\nللإلغاء أرسل /ai_fix_cancel")
-
-
-@client.on(events.NewMessage(pattern=r"^/ai_fix_cancel$", from_users=DEV_ID))
-@safe_execute
-async def cmd_ai_fix_cancel(event):
-    DEV_STATE.pop("ai_fix_waiting", None)
-    await event.reply("تم الإلغاء.")
-
-
-@client.on(events.CallbackQuery(data=b"dev_ai_diagnose_help"))
-@safe_execute
-async def cb_dev_ai_diagnose_help(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    text = ("كيفية استخدام التشخيص الذكي:\n\n"
-            "1. أرسل الأمر /ai_fix\n"
-            "2. أرسل وصف المشكلة بالتفصيل\n"
-            "3. سيقوم الذكاء الاصطناعي بتحليلها واقتراح حل مع كود إن أمكن\n\n"
-            "ملاحظة: التطبيق التلقائي غير مفعل حالياً، سيتم عرض الحل فقط.")
-    try:
-        await event.edit(text, buttons=[[Button.inline("رجوع", b"dev_menu_ai")]])
-    except Exception:
-        await event.reply(text, buttons=[[Button.inline("رجوع", b"dev_menu_ai")]])
+        await event.reply(text, buttons=build_ai_assistant_kb())
 
 
 @client.on(events.CallbackQuery(data=b"dev_back"))
@@ -3232,8 +3239,7 @@ async def cmd_broadcast_all(event):
             us += 1
             await asyncio.sleep(0.5)
         except Exception:
-            pass
-    await event.reply("تم الإرسال إلى " + str(gs) + " مجموعة و " + str(us) + " مستخدم.")
+            pass    await event.reply("تم الإرسال إلى " + str(gs) + " مجموعة و " + str(us) + " مستخدم.")
 
 
 @client.on(events.NewMessage(pattern=r"^/ban_group (-?\d+)$", from_users=DEV_ID))
@@ -3482,7 +3488,6 @@ async def _restart_bot():
     os._exit(0)
 
 
-
 AI_ASSIST_STATE = {}
 
 
@@ -3491,24 +3496,6 @@ def build_ai_assistant_kb():
         [Button.inline("أخبرني بالمشكلة", b"ai_assist_start")],
         [Button.inline("رجوع", b"dev_back")],
     ]
-
-
-@client.on(events.CallbackQuery(data=b"dev_menu_ai"))
-@safe_execute
-async def cb_dev_menu_ai(event):
-    if event.sender_id != DEV_ID:
-        return await event.answer("للمطور فقط.", alert=True)
-    await event.answer()
-    text = ("المساعد الذكي\n\n"
-            "اكتب وصف المشكلة أو التعديل الذي تريده، وسأقرأ الملفات وأقترح الحل.\n\n"
-            "أمثلة:\n"
-            "- الذكاء الاصطناعي ما يزايد عدل، خليه يقرر بين القبول والرفع والإجبار\n"
-            "- عندي خطأ في تسجيل النقاط\n"
-            "- أريد تحسين سرعة البوت")
-    try:
-        await event.edit(text, buttons=build_ai_assistant_kb())
-    except Exception:
-        await event.reply(text, buttons=build_ai_assistant_kb())
 
 
 @client.on(events.CallbackQuery(data=b"ai_assist_start"))
@@ -3690,8 +3677,8 @@ async def ai_assist_receive_issue(event):
         await event.reply(preview[:4000], buttons=kb)
     except Exception:
         pass
-        
-        
+
+
 @client.on(events.CallbackQuery(data=b"ai_assist_show_full"))
 @safe_execute
 async def cb_ai_assist_show_full(event):
@@ -3718,6 +3705,7 @@ async def cb_ai_assist_show_full(event):
     except Exception:
         pass
 
+
 @client.on(events.CallbackQuery(data=b"ai_assist_edit_desc"))
 @safe_execute
 async def cb_ai_assist_edit_desc(event):
@@ -3729,6 +3717,7 @@ async def cb_ai_assist_edit_desc(event):
         await event.edit("أرسل الوصف الجديد للمشكلة:\n\nللإلغاء: /ai_assist_cancel")
     except Exception:
         await event.reply("أرسل الوصف الجديد:\n\nللإلغاء: /ai_assist_cancel")
+
 
 @client.on(events.CallbackQuery(data=b"ai_assist_cancel_btn"))
 @safe_execute
@@ -3805,41 +3794,5 @@ async def cb_ai_assist_apply(event):
     await _restart_bot()
 
 
-@client.on(events.NewMessage(pattern=r"^المطور$"))
-@safe_execute
-async def cmd_dev_announce(event):
-    if event.is_private:
-        return
-    try:
-        me = await client.get_entity(DEV_ID)
-    except Exception:
-        return
-    first = safe_str(getattr(me, "first_name", ""), "")
-    last = safe_str(getattr(me, "last_name", ""), "")
-    full = (first + " " + last).strip() or "المطور"
-    user_id = getattr(me, "id", DEV_ID)
-    text = "\n[" + full + "](tg://user?id=" + str(user_id) + ")"
-    kb = [
-        [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
-        [Button.url("• قناة التحديثات •", "https://t.me/" + DEV_CHANNEL)],
-    ]
-    photo = None
-    try:
-        photo = await client.download_profile_photo(me, file=bytes)
-    except Exception:
-        photo = None
-    try:
-        if photo:
-            import io
-            bio = io.BytesIO(photo)
-            bio.name = "dev.jpg"
-            await client.send_file(event.chat_id, bio, caption=text, buttons=kb, parse_mode="md")
-        else:
-            await event.reply(text, buttons=kb, parse_mode="md")
-    except Exception:
-        try:
-            await event.reply(text, buttons=kb)
-        except Exception:
-            pass
 print("Bot is running...")
 client.run_until_disconnected()
