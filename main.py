@@ -37,6 +37,9 @@ BACKUP_DIR = "file_backups"
 EDIT_LOG = "edit_log.json"
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
+from config import GEMINI_KEYS, GEMINI_API_KEY
+print("GEMINI_KEYS loaded:", len(GEMINI_KEYS), "keys")
+print("GEMINI_API_KEY:", GEMINI_API_KEY[:15] + "..." if GEMINI_API_KEY else "EMPTY")
 
 TEAM_NAMES = [
     ("فريق MBC3", "فريق سبيستون"),
