@@ -2498,10 +2498,30 @@ async def cmd_end(event):
         await event.reply("لا توجد لعبة جارية.")
 
 
-@client.on(events.NewMessage(pattern=r"^/top(?:@\S+)?$"))
+@client.on(events.NewMessage(pattern=r"^/top"))
 @safe_execute
 async def cmd_top(event):
     if event.is_private:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT name, points FROM groups ORDER BY points DESC LIMIT 5")
+        gtop = c.fetchall()
+        c.execute("SELECT user_id, name, points FROM players ORDER BY points DESC LIMIT 5")
+        ptop = c.fetchall()
+        conn.close()
+        msg = "لوحة المتصدرين\n\nأفضل الكروبات:\n"
+        if not gtop:
+            msg += "لا يوجد\n"
+        for r in gtop:
+            msg += display_group_name(safe_str(r["name"], "")) + ": " + str(r["points"]) + " نقطة\n"
+        msg += "\nأفضل اللاعبين:\n"
+        if not ptop:
+            msg += "لا يوجد\n"
+        for r in ptop:
+            uid = r["user_id"]
+            name = clean_name_with_id(safe_str(r["name"], ""), uid, "لاعب")
+            msg += user_link(uid, name) + ": " + str(r["points"]) + " نقطة\n"
+        await event.reply(msg)
         return
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
@@ -2529,26 +2549,36 @@ async def cmd_top(event):
         name = clean_name_with_id(safe_str(r["name"], ""), uid, "لاعب")
         msg += user_link(uid, name) + ": " + str(r["points"]) + " نقطة\n"
     await event.reply(msg)
+    
 
-
-@client.on(events.NewMessage(pattern=r"^/help(?:@\S+)?$"))
+@client.on(events.NewMessage(pattern=r"^/help"))
 @safe_execute
 async def cmd_help(event):
     if event.is_private:
+        await event.reply(
+            "أهلاً بك في بوت المسابقات!\n\n"
+            "الأوامر المتاحة:\n"
+            "/start_game - بدء لعبة جديدة في المجموعات\n"
+            "/1v1 - تحدي ثنائي بالرد\n"
+            "/status - حالة اللعبة\n"
+            "/top - عرض لوحة المتصدرين\n"
+            "/ai_play - اللعب ضد الذكاء الاصطناعي في الخاص\n"
+            "/ai_stop - إيقاف اللعبة ضد الذكاء الاصطناعي"
+        )
         return
     if not await is_group_admin(event):
         return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
-    await event.reply("الأوامر:\n/start_game عدد\n/1v1 بالرد\n/end_game\n/status\n/top\n/help")
-
-
-@client.on(events.NewMessage(pattern=r"^/dev$", from_users=DEV_ID))
-@safe_execute
-async def cmd_dev(event):
-    await send_dev_panel(event.sender_id)
-    try:
-        await event.delete()
-    except Exception:
-        pass
+    await event.reply(
+        "الأوامر:\n"
+        "/start_game عدد\n"
+        "/1v1 بالرد\n"
+        "/end_game\n"
+        "/status\n"
+        "/top\n"
+        "/help"
+    )
+    
+    
 
 
 @client.on(events.NewMessage(pattern=r"^المطور$"))
@@ -2565,7 +2595,7 @@ async def cmd_dev_announce(event):
     full = (first + " " + last).strip() or "المطور"
     user_id = getattr(me, "id", DEV_ID)
     name_link = "[" + full + "](tg://user?id=" + str(user_id) + ")"
-    text = "المطور:\n" + name_link
+    text = name_link
     kb = [
         [Button.url("• " + DEV_BIO, "https://t.me/" + DEV_USERNAME)],
 ]
