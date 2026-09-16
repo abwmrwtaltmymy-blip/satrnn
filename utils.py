@@ -3,7 +3,7 @@ import json
 import random
 import asyncio
 from telethon import errors, functions, Button
-from config import GEMINI_API_KEY
+from config import GEMINI_API_KEY, GEMINI_KEYS
 from questions import BAD_WORDS, SAFE_FALLBACK
 
 try:
@@ -12,10 +12,12 @@ try:
 except Exception:
     _genai_available = False
 
-_gemini_client = None
+_gemini_clients = []
+_gemini_keys_working = []
 _gemini_models_working = []
 _gemini_lock = None
 _norm_cache = {}
+_gemini_key_index = 0
 
 ARABIC_ONLY_RE = re.compile(r"^[\u0600-\u06FF\s]+$")
 REPEAT_CHAR_RE = re.compile(r"(.)\1{2,}")
@@ -96,84 +98,109 @@ def _is_bad_name(name):
 
 
 def _init_gemini():
-    global _gemini_client, _gemini_models_working
-    if _gemini_client is not None and _gemini_models_working:
+    global _gemini_clients, _gemini_keys_working, _gemini_models_working
+    if _gemini_clients and _gemini_keys_working and _gemini_models_working:
         return True
     if not _genai_available:
         print("google-genai not installed")
         return False
-    if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 20:
-        print("Gemini key missing")
+    all_keys = []
+    for k in GEMINI_KEYS:
+        if k and len(k) > 20:
+            all_keys.append(k)
+    if GEMINI_API_KEY and len(GEMINI_API_KEY) > 20 and GEMINI_API_KEY not in all_keys:
+        all_keys.append(GEMINI_API_KEY)
+    if not all_keys:
+        print("No Gemini keys available")
         return False
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        print("Gemini client failed:", str(e)[:200])
-        return False
-    available = []
-    try:
-        for m in client.models.list():
-            name = m.name
-            if name.startswith("models/"):
-                name = name[len("models/"):]
-            available.append(name)
-    except Exception as e:
-        print("Gemini list failed:", str(e)[:200])
-        return False
-    if not available:
-        print("Gemini: no models returned")
-        return False
-    print("Gemini models available:", available[:20])
-
-    candidates = []
-    for name in available:
-        low = name.lower()
-        if low.startswith("gemini-2."):
+    working_clients = []
+    working_keys = []
+    working_models = []
+    for idx, key in enumerate(all_keys):
+        try:
+            client = genai.Client(api_key=key)
+        except Exception as e:
+            print("Gemini client failed for key " + str(idx) + ":", str(e)[:150])
             continue
-        if "flash" in low and "vision" not in low and "embedding" not in low:
-            candidates.append(name)
-    if not candidates:
+        available = []
+        try:
+            for m in client.models.list():
+                name = m.name
+                if name.startswith("models/"):
+                    name = name[len("models/"):]
+                available.append(name)
+        except Exception as e:
+            print("Gemini list failed for key " + str(idx) + ":", str(e)[:150])
+            continue
+        if not available:
+            continue
+        candidates = []
         for name in available:
             low = name.lower()
-            if "pro" in low and "vision" not in low and "embedding" not in low:
+            if low.startswith("gemini-2."):
+                continue
+            if "flash" in low and "vision" not in low and "embedding" not in low:
                 candidates.append(name)
-    if not candidates:
-        candidates = available[:5]
-
-    working = []
-    for name in candidates:
-        try:
-            test = client.models.generate_content(model=name, contents="hi")
-            if test and test.text:
-                working.append(name)
-                print("Gemini OK:", name)
-        except Exception as e:
-            err = str(e)[:150]
-            print("Gemini test failed:", name, "->", err)
-            continue
-    if not working:
-        print("No working Gemini model found")
+        if not candidates:
+            for name in available:
+                low = name.lower()
+                if "pro" in low and "vision" not in low and "embedding" not in low:
+                    candidates.append(name)
+        if not candidates:
+            candidates = available[:5]
+        key_working_models = []
+        for name in candidates:
+            try:
+                test = client.models.generate_content(model=name, contents="hi")
+                if test and test.text:
+                    key_working_models.append(name)
+                    break
+            except Exception as e:
+                err = str(e)[:120]
+                print("Gemini test failed for key " + str(idx) + " model " + name + ":", err)
+                continue
+        if key_working_models:
+            working_clients.append(client)
+            working_keys.append(key)
+            working_models.append(key_working_models[0])
+            print("Gemini key " + str(idx) + " OK with model: " + key_working_models[0])
+        else:
+            print("Gemini key " + str(idx) + " has no working model")
+    if not working_clients:
+        print("No working Gemini keys found")
         return False
-    _gemini_client = client
-    _gemini_models_working = working
-    print("Gemini ready with:", working[0], "total:", len(working))
+    _gemini_clients = working_clients
+    _gemini_keys_working = working_keys
+    _gemini_models_working = working_models
+    print("Gemini ready with " + str(len(working_clients)) + " keys")
     return True
 
 
 async def _gemini_generate(prompt, max_retries=4):
+    global _gemini_key_index
     if not _init_gemini():
         return None
     async with _get_lock():
+        clients = list(_gemini_clients)
         models = list(_gemini_models_working)
-    for model_name in models:
+        start_idx = _gemini_key_index
+    total = len(clients)
+    if total == 0:
+        return None
+    for offset in range(total):
+        idx = (start_idx + offset) % total
+        client = clients[idx]
+        model_name = models[idx]
         for attempt in range(max_retries):
             try:
-                response = _gemini_client.models.generate_content(
+                response = client.models.generate_content(
                     model=model_name,
                     contents=prompt,
                 )
                 text = safe_str(response.text, "").strip()
                 if text:
+                    async with _get_lock():
+                        _gemini_key_index = (idx + 1) % total
                     return text
             except Exception as e:
                 err = str(e)
@@ -182,12 +209,12 @@ async def _gemini_generate(prompt, max_retries=4):
                     await asyncio.sleep(wait)
                     continue
                 if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    await asyncio.sleep(5)
-                    continue
+                    print("Key " + str(idx) + " hit rate limit, trying next key")
+                    break
                 if "500" in err or "INTERNAL" in err:
                     await asyncio.sleep(1.5)
                     continue
-                print("Gemini generate failed:", model_name, "->", err[:150])
+                print("Gemini generate failed key " + str(idx) + ":", err[:150])
                 break
     return None
 
@@ -758,21 +785,11 @@ def _local_generate_bid(question, difficulty="medium"):
     return random.randint(low, high)
 
 
-# ============ الذكاء الاصطناعي التفاعلي (طلب و) ============
-
 async def ai_smart_bid(question, difficulty="medium", opponent_bid=0, is_response=False):
-    """
-    الذكاء الاصطناعي يزايد بذكاء حسب مستواه.
-    - إذا is_response=True، فهو يرد على مزايدة الخصم.
-    - إذا is_response=False، فهو يبدأ المزايدة.
-    """
     question = safe_str(question, "")
     ranges = {"easy": (3, 6), "medium": (5, 9), "hard": (8, 14)}
     low, high = ranges.get(difficulty, (5, 9))
-
     if is_response and opponent_bid > 0:
-        # الذكاء الاصطناعي يرد على مزايدة الخصم
-        # احتمال القبول أو الرفع حسب الصعوبة
         if difficulty == "easy":
             accept_chance = 0.5
             max_raise = 2
@@ -782,31 +799,21 @@ async def ai_smart_bid(question, difficulty="medium", opponent_bid=0, is_respons
         else:
             accept_chance = 0.2
             max_raise = 4
-
         if random.random() < accept_chance:
             return "accept", opponent_bid
-
         new_bid = opponent_bid + random.randint(1, max_raise)
         return "raise", min(new_bid, 50)
-
-    # بدء المزايدة
     if difficulty == "easy":
         base = random.randint(low, max(low, high - 2))
     elif difficulty == "medium":
         base = random.randint(low, high)
     else:
         base = random.randint(high - 2, high)
-
     return "bid", max(1, min(base, 50))
 
 
 async def ai_react_to_bid(question, difficulty="medium", player_bid=0):
-    """
-    الذكاء الاصطناعي يقرر كيف يتفاعل مع مزايدة اللاعب.
-    يرجع: ("accept" أو "raise" أو "force"، الرقم)
-    """
     question = safe_str(question, "")
-
     if difficulty == "easy":
         accept_chance = 0.5
         force_chance = 0.1
@@ -819,20 +826,16 @@ async def ai_react_to_bid(question, difficulty="medium", player_bid=0):
         accept_chance = 0.2
         force_chance = 0.25
         max_raise = 4
-
     roll = random.random()
-
     if roll < force_chance:
         return "force", player_bid
     if roll < force_chance + accept_chance:
         return "accept", player_bid
-
     new_bid = player_bid + random.randint(1, max_raise)
     return "raise", min(new_bid, 50)
 
 
 async def ai_human_like_delay(difficulty="medium"):
-    """تأخير طبيعي يحاكي تفكير البشر."""
     if difficulty == "easy":
         delay = random.uniform(1.5, 3.5)
     elif difficulty == "medium":
@@ -843,14 +846,13 @@ async def ai_human_like_delay(difficulty="medium"):
 
 
 async def ai_comment_on_round(difficulty="medium", success=False, is_player=False):
-    """تعليق بشري على نتيجة الجولة."""
     if success:
         comments = [
             "ههههههه، سهل!",
             "شفت شلون؟",
             "هذا شيء بسيط بالنسبة إلي.",
             "توقعتها صح.",
-            "أنا الأفضل بهذا المجال 😎",
+            "أنا الأفضل بهذا المجال",
         ]
     else:
         comments = [
@@ -860,27 +862,18 @@ async def ai_comment_on_round(difficulty="medium", success=False, is_player=Fals
             "ما توقعت هذا.",
             "المهم، الجاي أحسن.",
         ]
-
     if is_player:
         if success:
             return random.choice(["أحسنت!", "برافو!", "شاطر!", "ما شاء الله!"])
         else:
             return random.choice(["لا بأس، حاول مرة ثانية.", "المهم المشاركة.", "الجاي أحسن."])
-
     return random.choice(comments)
 
 
-# ============ التشخيص الذكي (طلب د) ============
-
 async def ai_diagnose_issue(issue_text):
-    """
-    يحلل المشكلة ويعطي حلاً مقترحاً.
-    يرجع: (تحليل، حل_مقترح، كود_مقترح أو None)
-    """
     issue_text = safe_str(issue_text, "")
     if not issue_text:
         return "لم يتم تقديم وصف للمشكلة.", "", None
-
     prompt = (
         "أنت خبير مبرمج Python وبوتات Telethon.\n"
         "المستخدم يواجه مشكلة في بوت تلغرام بلغة Python.\n\n"
@@ -895,17 +888,45 @@ async def ai_diagnose_issue(issue_text):
     text = await _gemini_generate(prompt)
     if not text:
         return "تعذر الاتصال بالذكاء الاصطناعي.", "حاول مرة أخرى.", None
-
     data = _parse_gemini_json(text)
     if not data:
         return text[:500], "لم يتمكن التحليل من إرجاع JSON.", None
-
     analysis = safe_str(data.get("analysis"), "لا يوجد تحليل.")
     solution = safe_str(data.get("solution"), "لا يوجد حل مقترح.")
     code = safe_str(data.get("code"), "")
     if not code:
         code = None
     return analysis, solution, code
+
+
+def extract_function_code(file_content, function_name):
+    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    match = re.search(pattern, file_content)
+    if match:
+        return match.group(1)
+    pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    match2 = re.search(pattern2, file_content, re.MULTILINE)
+    if match2:
+        return match2.group(1)
+    return None
+
+
+def replace_function_code(file_content, function_name, new_code):
+    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+    new_content, count = re.subn(pattern, "\n" + new_code.strip() + "\n", file_content, count=1)
+    if count == 0:
+        pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
+        new_content, count = re.subn(pattern2, new_code.strip() + "\n", file_content, count=1, flags=re.MULTILINE)
+    if count == 0:
+        return None
+    return new_content
+
+
+def list_functions_in_file(file_content):
+    functions = []
+    for m in re.finditer(r"^\s*(async\s+)?def\s+(\w+)\s*\(", file_content, re.MULTILINE):
+        functions.append(m.group(2))
+    return functions
 
 
 def translate_error(err):
@@ -1051,109 +1072,23 @@ def diagnose_gemini():
         "errors": [],
         "working": False,
     }
-    try:
-        from config import GEMINI_API_KEY as _k
-        if _k:
-            result["key_exists"] = True
-            result["key_length"] = len(_k)
-            result["key_start"] = _k[:8] + "..." if len(_k) > 8 else _k
-    except Exception as e:
-        result["errors"].append("استيراد المفتاح: " + str(e)[:150])
-        return result
+    total_keys = len([k for k in GEMINI_KEYS if k and len(k) > 20])
+    result["key_exists"] = total_keys > 0
+    result["key_length"] = total_keys
+    result["key_start"] = "عدد المفاتيح: " + str(total_keys)
     if not result["key_exists"]:
-        result["errors"].append("GEMINI_API_KEY غير موجود.")
-        return result
-    if result["key_length"] < 20:
-        result["errors"].append("طول المفتاح قصير (" + str(result["key_length"]) + ").")
+        result["errors"].append("لا توجد مفاتيح Gemini.")
         return result
     if not _genai_available:
         result["errors"].append("مكتبة google-genai غير مثبتة.")
         return result
     try:
-        client = genai.Client(api_key=_k)
-        result["client_created"] = True
+        _init_gemini()
+        result["client_created"] = len(_gemini_clients) > 0
+        result["models_available"] = list(_gemini_models_working)
+        result["working"] = len(_gemini_clients) > 0
+        for i, m in enumerate(_gemini_models_working):
+            result["models_tested"].append("مفتاح " + str(i) + ": " + m)
     except Exception as e:
-        result["errors"].append("فشل client: " + str(e)[:200])
-        return result
-    try:
-        for m in client.models.list():
-            name = m.name
-            if name.startswith("models/"):
-                name = name[len("models/"):]
-            result["models_available"].append(name)
-    except Exception as e:
-        result["errors"].append("فشل جلب القائمة: " + str(e)[:200])
-        return result
-    for name in result["models_available"][:15]:
-        low = name.lower()
-        if "embedding" in low or "vision" in low and "flash" not in low:
-            continue
-        try:
-            test = client.models.generate_content(model=name, contents="hi")
-            if test and test.text:
-                result["models_tested"].append(name + ": يعمل")
-                result["working"] = True
-            else:
-                result["models_tested"].append(name + ": رد فاضي")
-        except Exception as e:
-            result["models_tested"].append(name + ": " + str(e)[:100])
+        result["errors"].append("فشل التهيئة: " + str(e)[:200])
     return result
-
-
-async def ai_suggest_function_fix(filename, function_name, issue_description, file_content):
-    if not _init_gemini():
-        return None, "الذكاء الاصطناعي غير متاح."
-    prompt = (
-        "أنت خبير Python وبوتات Telethon.\n"
-        "المستخدم يريد تعديل دالة معينة في ملف.\n\n"
-        "اسم الملف: " + filename + "\n"
-        "اسم الدالة: " + function_name + "\n"
-        "وصف المشكلة/التعديل: " + issue_description + "\n\n"
-        "الكود الحالي للدالة:\n"
-        "```python\n" + function_name + "\n```\n\n"
-        "المطلوب: أعد الكود الجديد للدالة فقط، كاملاً من def إلى آخر سطر فيها، بدون أي شرح أو تعليقات.\n"
-        "لا تكتب أي شيء آخر غير الكود.\n\n"
-        "أعد النتيجة بصيغة JSON فقط:\n"
-        "{\"function_code\": \"كود الدالة الجديد\", \"explanation\": \"شرح مختصر\"}"
-    )
-    text = await _gemini_generate(prompt)
-    if not text:
-        return None, "تعذر الاتصال بالذكاء الاصطناعي."
-    data = _parse_gemini_json(text)
-    if not data:
-        return None, "لم يتمكن التحليل من إرجاع JSON."
-    code = safe_str(data.get("function_code"), "")
-    explanation = safe_str(data.get("explanation"), "")
-    if not code:
-        return None, "لم يتم إرجاع كود."
-    return code, explanation
-
-
-def extract_function_code(file_content, function_name):
-    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
-    match = re.search(pattern, file_content)
-    if match:
-        return match.group(1)
-    pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
-    match2 = re.search(pattern2, file_content, re.MULTILINE)
-    if match2:
-        return match2.group(1)
-    return None
-
-
-def replace_function_code(file_content, function_name, new_code):
-    pattern = r"(\n[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
-    new_content, count = re.subn(pattern, "\n" + new_code.strip() + "\n", file_content, count=1)
-    if count == 0:
-        pattern2 = r"(^[ \t]*(?:async )?def " + re.escape(function_name) + r"\s*\([^)]*\)\s*(?:->[^:]+)?\s*:(?:\n(?:[ \t]+.*)?)*)"
-        new_content, count = re.subn(pattern2, new_code.strip() + "\n", file_content, count=1, flags=re.MULTILINE)
-    if count == 0:
-        return None
-    return new_content
-
-
-def list_functions_in_file(file_content):
-    functions = []
-    for m in re.finditer(r"^\s*(async\s+)?def\s+(\w+)\s*\(", file_content, re.MULTILINE):
-        functions.append(m.group(2))
-    return functions
