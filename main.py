@@ -373,21 +373,26 @@ async def on_group_join(event):
         return
     if event.user_id != me.id:
         return
+
     now = time.time()
     key = (event.chat_id, me.id)
     last = _last_join_event.get(key, 0)
     if now - last < 10:
         return
     _last_join_event[key] = now
+
     chat = await event.get_chat()
     chat_title = safe_str(getattr(chat, "title", ""), "")
+
     if name_has_bad_word(chat_title):
         await notify_dev("البوت في مجموعة باسم مخالف:\nID: " + str(event.chat_id))
+
     perms = None
     try:
         perms = await client.get_permissions(event.chat_id, me.id)
     except Exception:
         perms = None
+
     is_admin = False
     missing = []
     if perms is not None:
@@ -398,6 +403,7 @@ async def on_group_join(event):
             missing.append("تثبيت الرسائل")
     else:
         missing.append("جميع صلاحيات المشرف")
+
     if (not is_admin) or missing:
         u = await bot_username()
         link = "https://t.me/" + u + "?startgroup=admin"
@@ -412,29 +418,57 @@ async def on_group_join(event):
         except Exception:
             pass
         await client.delete_dialog(event.chat_id)
-        await notify_dev("خرج البوت من مجموعة (صلاحيات ناقصة):\n" + display_group_name(chat_title) + "\nID: " + str(event.chat_id) + "\nالناقص: " + ", ".join(missing))
+        await notify_dev(
+            "خرج البوت من مجموعة (صلاحيات ناقصة):\n"
+            + display_group_name(chat_title)
+            + "\nID: " + str(event.chat_id)
+            + "\nالناقص: " + ", ".join(missing)
+        )
         return
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR IGNORE INTO groups (chat_id, name) VALUES (?, ?)",
+            (event.chat_id, safe_str(chat_title, "المجموعة")),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("add group error:", str(e)[:150])
+
     try:
         await client.send_message(event.chat_id, "تمت إضافتي بنجاح. للبدء أرسل /start_game")
     except Exception:
         pass
-    await notify_dev("أضيف البوت إلى مجموعة:\n" + display_group_name(chat_title) + "\nID: " + str(event.chat_id))
+
+    await notify_dev(
+        "أضيف البوت إلى مجموعة:\n"
+        + display_group_name(chat_title)
+        + "\nID: " + str(event.chat_id)
+    )
 
 
 @client.on(events.NewMessage(pattern=r"^/start(?:@\S+)?(?: (.+))?$"))
 @safe_execute
 async def cmd_start(event):
     payload = safe_str(event.pattern_match.group(1), "")
+
     if event.is_private:
         user = await event.get_sender()
+        from database import is_new_user
+        is_new = is_new_user(user.id)
         register_user(user.id, clean_name(user.first_name))
-        if not payload.startswith("join_"):
+        if not payload.startswith("join_") and is_new:
             asyncio.create_task(notify_dev_user_start(user))
+
         if payload.startswith("join_"):
             try:
                 gid = int(payload[5:])
             except Exception:
                 gid = None
+
             if gid is not None:
                 g = internal_games.get(gid)
                 if g and g.state == "waiting":
@@ -442,18 +476,29 @@ async def cmd_start(event):
                         return await event.reply("أنت منضم بالفعل في هذه المجموعة.")
                     if len(g.players) >= g.required_total:
                         return await event.reply("اكتمل العدد في هذه المجموعة.")
+
                     name = clean_name_with_id(user.first_name, user.id, "لاعب")
                     g.players.append(user.id)
                     g.names.append(name)
+
                     if not hasattr(g, "_name_cache") or g._name_cache is None:
                         g._name_cache = {}
                     g._name_cache[user.id] = name
-                    await event.reply("تم تسجيل انضمامك في " + display_group_name(getattr(g, "chat_name_display", None) or g.chat_name) + "\nانتظر في الكروب.")
+
+                    await event.reply(
+                        "تم تسجيل انضمامك في "
+                        + display_group_name(
+                            getattr(g, "chat_name_display", None) or g.chat_name
+                        )
+                        + "\nانتظر في الكروب."
+                    )
                     await refresh_join_pinned(g)
+
                     if len(g.players) >= g.required_total:
                         g.split_teams()
                         g.state = "playing"
                         await cache_names(g, g.team1, g.team2)
+
                         if g.team_size == 1:
                             t1_name = g._name_cache.get(g.team1[0]) or ("لاعب " + str(g.team1[0]))
                             t2_name = g._name_cache.get(g.team2[0]) or ("لاعب " + str(g.team2[0]))
@@ -463,38 +508,47 @@ async def cmd_start(event):
                             labels = pick_team_names()
                             g.team1_label = labels[0] if labels[0] else "الفريق الأول"
                             g.team2_label = labels[1] if labels[1] else "الفريق الثاني"
+
                         if not g.team1_label:
                             g.team1_label = "الفريق الأول"
                         if not g.team2_label:
                             g.team2_label = "الفريق الثاني"
+
                         await send_teams_intro_internal(g)
                         await asyncio.sleep(4)
                         await start_round_internal(g)
                     return
                 else:
                     return await event.reply("لا يوجد تحدٍ مفتوح في هذه المجموعة حاليًا.")
+
         u = await bot_username()
-        text = ("أهلًا بك في بوت تحدي الثلاثين ثانية.\n\n"
-                "يمكنك:\n"
-                "1) إضافة البوت إلى مجموعتك لتنظيم تحديات بين الأعضاء.\n"
-                "2) اللعب ضد الذكاء الاصطناعي في الخاص مباشرة.\n\n"
-                "اختر ما تريد:")
+        text = (
+            "أهلًا بك في بوت تحدي الثلاثين ثانية.\n\n"
+            "يمكنك:\n"
+            "1) إضافة البوت إلى مجموعتك لتنظيم تحديات بين الأعضاء.\n"
+            "2) اللعب ضد الذكاء الاصطناعي في الخاص مباشرة.\n\n"
+            "اختر ما تريد:"
+        )
         kb = [
             [Button.inline("اللعب ضد الذكاء الاصطناعي", b"ai_menu")],
             [Button.url("أضف البوت إلى مجموعتك", "https://t.me/" + u + "?startgroup=admin")],
         ]
         await event.reply(text, buttons=kb)
+
         if user.id == DEV_ID:
             await send_dev_panel(user.id)
         return
+
     if is_banned(event.chat_id):
         return await event.reply("لقد تم حظر مجموعتكم من استعمال البوت.")
+
     if not await is_group_admin(event):
         return await event.reply("هذا الأمر مخصص للمشرفين فقط.")
+
     if not await require_subscription(event):
         return
-    await send_main_menu(event.chat_id)
 
+    await send_main_menu(event.chat_id)
 
 @client.on(events.NewMessage(pattern=r"^@(\S+)"))
 @safe_execute
