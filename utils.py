@@ -113,9 +113,6 @@ def _init_gemini():
     if not all_keys:
         print("No Gemini keys available")
         return False
-    working_clients = []
-    working_keys = []
-    working_models = []
     for idx, key in enumerate(all_keys):
         try:
             client = genai.Client(api_key=key)
@@ -139,7 +136,9 @@ def _init_gemini():
             low = name.lower()
             if low.startswith("gemini-2."):
                 continue
-            if "flash" in low and "vision" not in low and "embedding" not in low:
+            if "flash-lite" in low:
+                candidates.insert(0, name)
+            elif "flash" in low and "vision" not in low and "embedding" not in low:
                 candidates.append(name)
         if not candidates:
             for name in available:
@@ -147,75 +146,61 @@ def _init_gemini():
                 if "pro" in low and "vision" not in low and "embedding" not in low:
                     candidates.append(name)
         if not candidates:
-            candidates = available[:5]
-        key_working_models = []
+            candidates = available[:3]
         for name in candidates:
             try:
                 test = client.models.generate_content(model=name, contents="hi")
                 if test and test.text:
-                    key_working_models.append(name)
-                    break
+                    _gemini_clients = [client]
+                    _gemini_keys_working = [key]
+                    _gemini_models_working = [name]
+                    print("Gemini ready with key " + str(idx) + " model: " + name)
+                    return True
             except Exception as e:
                 err = str(e)[:120]
                 print("Gemini test failed for key " + str(idx) + " model " + name + ":", err)
                 continue
-        if key_working_models:
-            working_clients.append(client)
-            working_keys.append(key)
-            working_models.append(key_working_models[0])
-            print("Gemini key " + str(idx) + " OK with model: " + key_working_models[0])
-        else:
-            print("Gemini key " + str(idx) + " has no working model")
-    if not working_clients:
-        print("No working Gemini keys found")
-        return False
-    _gemini_clients = working_clients
-    _gemini_keys_working = working_keys
-    _gemini_models_working = working_models
-    print("Gemini ready with " + str(len(working_clients)) + " keys")
-    return True
+    print("No working Gemini key found")
+    return False
 
 
-async def _gemini_generate(prompt, max_retries=4):
-    global _gemini_key_index
+async def _gemini_generate(prompt, max_retries=2):
+    global _gemini_clients, _gemini_keys_working, _gemini_models_working
     if not _init_gemini():
         return None
-    async with _get_lock():
-        clients = list(_gemini_clients)
-        models = list(_gemini_models_working)
-        start_idx = _gemini_key_index
-    total = len(clients)
-    if total == 0:
+    if not _gemini_clients:
         return None
-    for offset in range(total):
-        idx = (start_idx + offset) % total
-        client = clients[idx]
-        model_name = models[idx]
-        for attempt in range(max_retries):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
-                text = safe_str(response.text, "").strip()
-                if text:
-                    async with _get_lock():
-                        _gemini_key_index = (idx + 1) % total
-                    return text
-            except Exception as e:
-                err = str(e)
-                if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
-                    wait = (attempt + 1) * 2.0
-                    await asyncio.sleep(wait)
+    client = _gemini_clients[0]
+    model_name = _gemini_models_working[0]
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            text = safe_str(response.text, "").strip()
+            if text:
+                return text
+        except Exception as e:
+            err = str(e)
+            if "503" in err or "UNAVAILABLE" in err or "overloaded" in err.lower():
+                await asyncio.sleep((attempt + 1) * 1.5)
+                continue
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                print("Key exhausted, switching to next...")
+                _gemini_clients = []
+                _gemini_keys_working = []
+                _gemini_models_working = []
+                if _init_gemini():
+                    client = _gemini_clients[0]
+                    model_name = _gemini_models_working[0]
                     continue
-                if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                    print("Key " + str(idx) + " hit rate limit, trying next key")
-                    break
-                if "500" in err or "INTERNAL" in err:
-                    await asyncio.sleep(1.5)
-                    continue
-                print("Gemini generate failed key " + str(idx) + ":", err[:150])
-                break
+                return None
+            if "500" in err or "INTERNAL" in err:
+                await asyncio.sleep(1)
+                continue
+            print("Gemini generate failed:", err[:150])
+            break
     return None
 
 
@@ -577,9 +562,7 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
     uniq = _normalize_answers(answers_list)
     if not uniq:
         return False, "لم يتم إرسال أي إجابة صالحة."
-
     correct_answers, unknown_answers, is_bank_question = _check_against_bank(question, uniq)
-
     if is_bank_question:
         ai_verified_correct = 0
         if unknown_answers:
@@ -593,10 +576,8 @@ async def evaluate_answers_with_ai(question, expected_count, answers_list):
         if rejected:
             extra = " إجابات مرفوضة: " + ", ".join(rejected[:5])
         return False, "عدد الإجابات الصحيحة " + str(total_correct) + " أقل من المطلوب " + str(expected_count) + "." + extra
-
     if not _init_gemini():
         return _local_fallback_check(expected_count, uniq)
-
     prompt = (
         "قيّم إجابات لاعب في تحدي سريع.\n\n"
         "التصنيف: " + str(question) + "\n"
@@ -656,7 +637,6 @@ async def evaluate_winner_points(stats, winner_label, loser_label, team_size):
     avg_duration = total_duration / total_rounds if total_rounds > 0 else 30
     avg_bid = total_bid / total_rounds if total_rounds > 0 else 0
     avg_answers = total_answers / total_rounds if total_rounds > 0 else 0
-
     if not _init_gemini():
         points = 350
         points += min(80, wins * 12)
@@ -667,7 +647,6 @@ async def evaluate_winner_points(stats, winner_label, loser_label, team_size):
         if points < 350:
             points = 350
         return points, "تقييم تلقائي حسب الأداء."
-
     prompt = (
         "أنت مقيّم ذكي لمباراة في لعبة تحدي الثلاثين ثانية.\n"
         "المطلوب: أعطِ الفائز نقاطًا بين 350 و 500 حسب أدائه الفعلي.\n\n"
