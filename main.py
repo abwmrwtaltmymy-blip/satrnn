@@ -3099,9 +3099,30 @@ async def cb_dev_back(event):
 
 
 async def _restart_bot():
-    await client.disconnect()
     try:
+        await client.send_message(DEV_ID, "🔄 [RESTART] بدء إعادة التشغيل...")
+    except Exception:
+        pass
+    try:
+        await client.send_message(DEV_ID, "🔄 [RESTART] محاولة قطع الاتصال...")
+        await client.disconnect()
+        await client.send_message(DEV_ID, "✅ [RESTART] تم قطع الاتصال.")
+    except Exception as e:
+        try:
+            await client.send_message(DEV_ID, "❌ [RESTART] فشل قطع الاتصال: " + str(e)[:200])
+        except Exception:
+            pass
+    try:
+        await client.send_message(DEV_ID, "🔄 [RESTART] محاولة تشغيل نسخة جديدة...")
         subprocess.Popen(["python", "main.py"])
+        await client.send_message(DEV_ID, "✅ [RESTART] تم تشغيل نسخة جديدة.")
+    except Exception as e:
+        try:
+            await client.send_message(DEV_ID, "❌ [RESTART] فشل تشغيل النسخة الجديدة: " + str(e)[:200])
+        except Exception:
+            pass
+    try:
+        await client.send_message(DEV_ID, "🔄 [RESTART] الخروج من العملية الحالية...")
     except Exception:
         pass
     os._exit(0)
