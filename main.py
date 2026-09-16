@@ -207,6 +207,92 @@ async def delete_pinned(game_obj, chat_id):
     game_obj.pin_msg_id = None
 
 
+async def get_full_bot_context():
+    info = []
+    try:
+        from config import GEMINI_KEYS, GEMINI_API_KEY
+        from utils import _gemini_models_working, _gemini_keys_working
+        total_keys = len([k for k in GEMINI_KEYS if k and len(k) > 20])
+        working = len(_gemini_models_working)
+        current = _gemini_models_working[0] if _gemini_models_working else "لا يوجد"
+        info.append("=== مفاتيح Gemini ===")
+        info.append("عدد المفاتيح الكلي: " + str(total_keys))
+        info.append("عدد المفاتيح الشغالة: " + str(working))
+        info.append("الموديل المستخدم: " + current)
+    except Exception as e:
+        info.append("خطأ في جلب المفاتيح: " + str(e)[:100])
+
+    try:
+        s = get_stats()
+        info.append("")
+        info.append("=== الإحصائيات ===")
+        info.append("المجموعات: " + str(s["groups"]))
+        info.append("اللاعبون: " + str(s["players"]))
+        info.append("المستخدمون: " + str(s["users"]))
+        info.append("المحظورة: " + str(s["banned"]))
+        info.append("قنوات الاشتراك: " + str(s["subs"]))
+    except Exception as e:
+        info.append("خطأ في الإحصائيات: " + str(e)[:100])
+
+    try:
+        info.append("")
+        info.append("=== الألعاب النشطة ===")
+        info.append("ألعاب داخلية: " + str(len(internal_games)))
+        info.append("بطولات: " + str(len(tournaments)))
+        info.append("ألعاب AI: " + str(len(ai_games)))
+        info.append("جلسات خاصة: " + str(len(private_sessions)))
+        info.append("قائمة الانتظار: " + str(len(matchmaking_pool)))
+    except Exception as e:
+        info.append("خطأ في الألعاب: " + str(e)[:100])
+
+    try:
+        info.append("")
+        info.append("=== الملفات ===")
+        for f in EDITABLE_FILES:
+            if os.path.exists(f):
+                size = os.path.getsize(f)
+                info.append("- " + f + ": " + str(size) + " بايت")
+            else:
+                info.append("- " + f + ": غير موجود")
+    except Exception as e:
+        info.append("خطأ في الملفات: " + str(e)[:100])
+
+    try:
+        info.append("")
+        info.append("=== الإعدادات ===")
+        info.append("الإشعارات: " + get_setting("dev_notifications", "1"))
+        info.append("التشغيل التلقائي: " + str(RESTART_AUTO.get("enabled", False)))
+    except Exception as e:
+        info.append("خطأ في الإعدادات: " + str(e)[:100])
+
+    try:
+        info.append("")
+        info.append("=== القنوات الإجبارية ===")
+        subs = get_force_subs()
+        if not subs:
+            info.append("لا يوجد")
+        else:
+            for sub in subs:
+                info.append("- " + safe_str(sub["username"], "") + " (طلب: " + str(sub["is_request_mode"]) + ")")
+    except Exception as e:
+        info.append("خطأ في القنوات: " + str(e)[:100])
+
+    try:
+        info.append("")
+        info.append("=== آخر 5 تعديلات ===")
+        if os.path.exists(EDIT_LOG):
+            with open(EDIT_LOG, "r", encoding="utf-8") as f:
+                log = json.load(f)
+            for entry in log[-5:]:
+                info.append("- " + entry.get("time", "") + " | " + entry.get("action", "") + " | " + entry.get("file", ""))
+        else:
+            info.append("لا يوجد")
+    except Exception as e:
+        info.append("خطأ في السجل: " + str(e)[:100])
+
+    return "\n".join(info)
+
+
 async def delete_tracked(game_obj):
     if game_obj is None or not hasattr(game_obj, "tracked_messages"):
         return
@@ -385,6 +471,11 @@ async def execute_ai_action(event, action, target, message):
                     "قنوات الاشتراك: " + str(s["subs"]))
             log_ai_action(action, "", "", "success")
             return await event.reply(text)
+        if action == "bot_full_info":
+            info = await get_full_bot_context()
+            log_ai_action(action, "", "", "success")
+            return await event.reply(info[:4000])
+    
         if action == "list_groups":
             conn = get_connection()
             c = conn.cursor()
@@ -2894,6 +2985,7 @@ async def handle_dev_chat(event, text):
     if not text:
         return
     await event.reply("جاري التفكير...")
+    bot_context = await get_full_bot_context()
     tools_desc = (
         "الأدوات المتاحة (ارجع JSON فقط):\n\n"
         "1. حظر مجموعة: {\"action\": \"ban_group\", \"target\": \"اسم أو ID\"}\n"
@@ -2909,14 +3001,18 @@ async def handle_dev_chat(event, text):
         "11. إرسال رسالة لمجموعة: {\"action\": \"send_message\", \"target\": \"اسم أو ID\", \"message\": \"النص\"}\n"
         "12. إعادة تشغيل البوت: {\"action\": \"restart_bot\"}\n"
         "13. معلومات مستخدم: {\"action\": \"user_info\", \"target\": \"اسم أو ID\"}\n"
-        "14. محادثة حرة: {\"action\": \"chat\", \"message\": \"ردك باللهجة العراقية\"}\n\n"
+        "14. محادثة حرة: {\"action\": \"chat\", \"message\": \"ردك باللهجة العراقية\"}\n"
+        "15. معلومات البوت الكاملة: {\"action\": \"bot_full_info\"}\n\n"
         "أعد JSON فقط."
     )
     prompt = (
         "أنت مساعد ذكي يتحكم في بوت تلغرام، وتتكلم باللهجة العراقية.\n\n"
+        "معلومات حقيقية عن البوت الحالي:\n"
+        + bot_context + "\n\n"
         "المطور قال: " + text + "\n\n"
-        "إذا كان سؤال → استخدم action=chat ورد بالعراقي.\n"
-        "إذا كان أمر → استخدم الأداة المناسبة.\n\n"
+        "إذا كان سؤال → استخدم action=chat ورد بالعراقي مستخدماً المعلومات أعلاه.\n"
+        "إذا كان أمر → استخدم الأداة المناسبة.\n"
+        "إذا سأل عن حالة البوت → استخدم action=bot_full_info.\n\n"
         + tools_desc
     )
     response = await _gemini_generate(prompt)
@@ -2928,7 +3024,7 @@ async def handle_dev_chat(event, text):
     action = safe_str(data.get("action"), "")
     target = safe_str(data.get("target"), "")
     message = safe_str(data.get("message"), "")
-    safe_actions = ("stats", "list_groups", "list_users", "game_status", "user_info", "chat")
+    safe_actions = ("stats", "list_groups", "list_users", "game_status", "user_info", "chat", "bot_full_info")
     confirm_actions = ("ban_group", "unban_group", "end_game", "broadcast_groups", "broadcast_users", "broadcast_all", "send_message", "restart_bot")
     if action in safe_actions:
         await execute_ai_action(event, action, target, message)
@@ -2999,3 +3095,4 @@ async def _restart_bot():
 
 print("Bot is running...")
 client.run_until_disconnected()
+
