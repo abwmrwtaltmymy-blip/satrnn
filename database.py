@@ -96,6 +96,14 @@ def get_all_users():
     conn.close()
     return res
 
+def is_new_user(user_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM all_users WHERE user_id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is None
+
 def add_force_sub(channel_id, username, is_request_mode=0):
     conn = get_connection()
     conn.execute("INSERT OR REPLACE INTO force_subs (channel_id, username, is_request_mode) VALUES (?, ?, ?)", (channel_id, username, is_request_mode))
