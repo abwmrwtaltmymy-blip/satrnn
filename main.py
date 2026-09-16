@@ -2981,10 +2981,14 @@ async def cmd_end_chat(event):
     await event.reply("تم إنهاء المحادثة.\n\nللعودة إلى لوحة المطور: /dev")
 
 
+AI_CHAT_HISTORY = {}
+
 async def handle_dev_chat(event, text):
     if not text:
         return
-    await event.reply("جاري التفكير...")
+    uid = event.sender_id
+    if uid not in AI_CHAT_HISTORY:
+        AI_CHAT_HISTORY[uid] = []
     bot_context = await get_full_bot_context()
     tools_desc = (
         "الأدوات المتاحة (ارجع JSON فقط):\n\n"
@@ -3005,11 +3009,17 @@ async def handle_dev_chat(event, text):
         "15. معلومات البوت الكاملة: {\"action\": \"bot_full_info\"}\n\n"
         "أعد JSON فقط."
     )
+    history = AI_CHAT_HISTORY[uid][-16:]
+    history_text = ""
+    for h in history:
+        history_text += "" + h["user"] + "\nالبوت: " + h["bot"] + "\n\n"
     prompt = (
-        "أنت مساعد ذكي يتحكم في بوت تلغرام، وتتكلم باللهجة العراقية.\n\n"
+        "أنت مساعد ذكي يتحكم في بوت تلغرام، وتتكلم باللهجة العراقية.\n"
+        "أنت تتحدث مع المطور، وردودك يجب أن تكون مترابطة مع المحادثة السابقة.\n\n"
         "معلومات حقيقية عن البوت الحالي:\n"
         + bot_context + "\n\n"
-        "المطور قال: " + text + "\n\n"
+        "المحادثة السابقة:\n" + history_text + "\n"
+        "المطور قال الآن: " + text + "\n\n"
         "إذا كان سؤال → استخدم action=chat ورد بالعراقي مستخدماً المعلومات أعلاه.\n"
         "إذا كان أمر → استخدم الأداة المناسبة.\n"
         "إذا سأل عن حالة البوت → استخدم action=bot_full_info.\n\n"
@@ -3024,6 +3034,10 @@ async def handle_dev_chat(event, text):
     action = safe_str(data.get("action"), "")
     target = safe_str(data.get("target"), "")
     message = safe_str(data.get("message"), "")
+    if action == "chat" and message:
+        AI_CHAT_HISTORY[uid].append({"user": text, "bot": message})
+        if len(AI_CHAT_HISTORY[uid]) > 20:
+            AI_CHAT_HISTORY[uid] = AI_CHAT_HISTORY[uid][-20:]
     safe_actions = ("stats", "list_groups", "list_users", "game_status", "user_info", "chat", "bot_full_info")
     confirm_actions = ("ban_group", "unban_group", "end_game", "broadcast_groups", "broadcast_users", "broadcast_all", "send_message", "restart_bot")
     if action in safe_actions:
@@ -3095,4 +3109,3 @@ async def _restart_bot():
 
 print("Bot is running...")
 client.run_until_disconnected()
-
