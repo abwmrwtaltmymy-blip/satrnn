@@ -3099,20 +3099,23 @@ async def cb_dev_back(event):
 
 
 async def _restart_bot():
+    print("[RESTART] ==========================================")
     print("[RESTART] بدء إعادة التشغيل...")
+    print("[RESTART] الوقت: " + time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("[RESTART] محاولة قطع الاتصال...")
     try:
-        print("[RESTART] محاولة قطع الاتصال...")
         await client.disconnect()
-        print("[RESTART] تم قطع الاتصال.")
+        print("[RESTART] ✅ تم قطع الاتصال.")
     except Exception as e:
-        print("[RESTART] فشل قطع الاتصال: " + str(e)[:200])
+        print("[RESTART] ❌ فشل قطع الاتصال: " + str(e)[:200])
+    print("[RESTART] محاولة تشغيل نسخة جديدة...")
     try:
-        print("[RESTART] محاولة تشغيل نسخة جديدة...")
         subprocess.Popen(["python", "main.py"])
-        print("[RESTART] تم تشغيل نسخة جديدة.")
+        print("[RESTART] ✅ تم تشغيل نسخة جديدة.")
     except Exception as e:
-        print("[RESTART] فشل تشغيل النسخة الجديدة: " + str(e)[:200])
+        print("[RESTART] ❌ فشل تشغيل النسخة الجديدة: " + str(e)[:200])
     print("[RESTART] الخروج من العملية الحالية...")
+    print("[RESTART] ==========================================")
     os._exit(0)
 
 
